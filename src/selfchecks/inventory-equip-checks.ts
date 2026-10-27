@@ -213,9 +213,18 @@ export async function runInventoryEquipChecks(): Promise<CheckGroup> {
   );
   const stamp = f2.api['inventory.mod'](swIid, 'atk_power', 25) as R<{ type: string; value: number }>;
   const withRoll = resolveAttack(f2); // 17 × (1 + 25/100) = 21.25 → round 21
+  // [FIX-RIVEN · FX3] тело чека расширено (счёт чеков НЕ растёт): (б) оракул
+  // отрицания — обычная строка на ненулевой пред-базе → inc D31 цел;
+  // (а) оракул катализа — спец-строка «Вещий удар» на НУЛЕВОЙ пред-базе
+  // (combat.prophetic: база 0, носитель меч не даёт флэтов) → flat-пункты
+  const propheticOf = () =>
+    f2.game.statBus.resolve({ stat: 'combat.prophetic', ctx: f2.game.time.ctx('player') });
+  const propheticBefore = propheticOf(); // карточки нет — 0
+  const stampProphetic = f2.api['inventory.mod'](swIid, 'prophetic_strike', 20) as R<unknown>;
+  const propheticAfter = propheticOf(); // 0 + flat 20 = 20 (вещий 20%)
   results.push(
-    check('провайдер rolledMods → inc (D31): 17 × 1.25 = 21.25 → 21', () =>
-      stamp.ok && withRoll === 21),
+    check('провайдер rolledMods → inc (D31): 17 × 1.25 = 21.25 → 21; [FIX-RIVEN] нулевая пред-база → flat: вещий 0 → 20', () =>
+      stamp.ok && withRoll === 21 && stampProphetic.ok && propheticBefore === 0 && propheticAfter === 20),
   );
   const dur0 = f2.api['inventory.dur'](swIid, 0) as R<{ current: number; max: number }>;
   const broken = resolveAttack(f2); // сломан → модов нет → база 5

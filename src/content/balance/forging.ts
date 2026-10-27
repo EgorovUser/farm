@@ -95,6 +95,14 @@ export const FORGE_BASES_TABLE: BasesTable = {
     'forge.success.bonus': 100,
     // [M10.2] статы особых карточных свойств (реестр M03 ссылается на базы —
     // инвариант «stat только на существующие базы»); потребители — M12+
+    // [FIX-RIVEN · FX1 · [QUESTION] №1] НУЛЕВЫЕ базы = метка flat-семантики:
+    // ривен-строки на нулевой пред-базе провайдер M02 каталитирует как
+    // op 'flat' — прибавление ПРОЦЕНТНЫХ ПУНКТОВ по значению строки реестра
+    // («Вещий удар» +20 → resolve combat.prophetic = 20, вещий 20%; движок
+    // M12 читает resolve как канонировано — без правок боя). Числа строк —
+    // реестр M03 (content/mods/registry.ts; канон «числа в content»);
+    // прецедент семантики — [DECISION] удач M01 (content/player/skills.ts:
+    // нулевая база → 'flat'). Ненулевые пред-базы (attack/def/…) — inc, D31.
     'combat.prophetic': 0,
     'mine.oreSense': 0,
     'combat.lifesteal': 0,

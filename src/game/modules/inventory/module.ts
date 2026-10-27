@@ -25,6 +25,7 @@
  */
 import type { GameModule, ModuleContext } from '@/game/module-registry';
 import type { InventoryTable } from '@/content/balance/inventory';
+import type { BasesTable } from '@/content/balance/bases';
 import type { ItemDef } from '@/content/items/items';
 import type { ModTypeDef } from '@/content/mods/registry';
 import type { RecipeDef } from '@/content/craft/recipes';
@@ -40,7 +41,7 @@ import { UseService, type UseReceipt } from './use';
 import { SellService, type SellReceipt } from './sell';
 import { SalvageService, type SalvageReceipt } from './salvage';
 import { WearService, type WearReceipt } from './wear';
-import type { ID, QualityTier } from '@/shared/types/ids';
+import type { ID, QualityTier, StatId } from '@/shared/types/ids';
 import { QUALITY_TIERS } from '@/shared/types/ids';
 import type { Result } from '@/shared/types/result';
 import type { ItemInstance } from './state';
@@ -192,11 +193,15 @@ export class InventoryModule implements GameModule {
     });
 
     // [M02.2] провайдер модификаторов экипировки (карточка §5): регистрация
-    // по манифесту modifierProviders (DEBT-8 — самоподключение до авто-монтажа)
+    // по манифесту modifierProviders (DEBT-8 — самоподключение до авто-монтажа).
+    // [FIX-RIVEN · FX1] baseOf — дата-база стата из слияния 'bases' (П2):
+    // нулевая пред-база → провайдер каталитирует rolledMods как flat
+    const basesTable = content.get<BasesTable>('bases');
     const provider = new EquipmentProvider({
       getState: () => store.getState(),
       tryItem,
       mods,
+      ...(basesTable ? { baseOf: (stat: StatId) => basesTable.bases[stat] ?? 0 } : {}),
       ...(this.moduleDeps.statScaleOf ? { statScaleOf: this.moduleDeps.statScaleOf } : {}),
     });
     statBus.registerProvider(provider);
