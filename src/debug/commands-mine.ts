@@ -1,9 +1,8 @@
 /**
- * Команды модуля M12 «Шахта» (бриф F8 + SESSION-M12.2 G7; регистрация —
- * console.ts после workers): mine state / mine mob <id> / mine fight <mobId>
- * [слой] [--seed S] / mine elite <mobId> <venomous|armored|swarm> [слой]
- * [--seed S] / mine enter <слой> (витрина гейтов/отказов/расхода энергии) /
- * mine boss <слой> [--seed S] (босс-фазы витриной; golden).
+ * Команды модуля M12+M13 «Шахта» (бриф F8 + SESSION-M12.2 G7 + SESSION-M13
+ * R7): mine state / mob / fight / elite / enter / boss (M12) + ровно ×7
+ * подкоманд забега (M13.1): run / pick / gen [--seed] / reveal / torch /
+ * upgrades / upgrades.buy. Регистрация — console.ts после workers.
  * Слой по умолчанию 1; fight/elite — песочница БЕЗ вход-гейтов (канон
  * M12.1: гейты = mine.enter/boss); --seed — фикс-сид для воспроизведения.
  * HP-сетап боёв — существующий dev hp set / give (НЕ дублируется);
@@ -53,6 +52,18 @@ interface EnterView {
   lines: string[];
 }
 
+interface RunViewShape {
+  header: string;
+  lines: string[];
+}
+
+function printRun(ctx: CommandContext, v: RunViewShape): void {
+  ctx.printTitle(v.header);
+  for (const line of v.lines) {
+    ctx.print(`  ${line}`);
+  }
+}
+
 function printFight(ctx: CommandContext, v: FightRoundView): void {
   ctx.printTitle(v.header);
   for (const line of v.rounds) {
@@ -75,9 +86,10 @@ function printMob(ctx: CommandContext, m: MobDefView): void {
 export function registerMineCommands(registry: CommandRegistry): void {
   registry.register({
     name: 'mine',
-    usage: 'mine <state|mob|fight|elite|enter|boss> [аргументы] [--seed S]',
+    usage:
+      'mine <state|mob|fight|elite|enter|boss|run|pick|gen|reveal|torch|upgrades> [аргументы] [--seed S]',
     description:
-      'шахта: статы среза / витрина моба / автобой (без вход-гейтов) / элитный бой / вход в шахту (гейты + энергия 20) / босс-бой слоя (карточка M12 §6)',
+      'шахта: статы среза / витрина моба / автобой / элита / вход-забег / босс / витрина забега / выбор карты / оракул генерации / debug-вскрытие / факел / улучшения (карточки M12 §6 + M13 §5)',
     run(args, ctx) {
       const api = ctx.game.modules.get('mine')?.api;
       if (!api) return ctx.printErr('модуль шахты не активен');
@@ -99,7 +111,7 @@ export function registerMineCommands(registry: CommandRegistry): void {
       }
       if (sub === 'enter') {
         if (args[1] === undefined) {
-          return ctx.printErr('укажите слой: mine enter <1..9> — гейты кирки/ачивки + энергия 20 (G4)');
+          return ctx.printErr('укажите слой: mine enter <1..9> — гейты кирки/ачивки + энергия 20 + СТАРТ ЗАБЕГА (G4 + R1)');
         }
         const r = api['mine.enter'](args[1]) as R<EnterView>;
         if (!r.ok) return ctx.printErr(r.error);
@@ -107,8 +119,69 @@ export function registerMineCommands(registry: CommandRegistry): void {
         for (const line of r.value.lines) {
           ctx.print(`  ${line}`);
         }
-        ctx.printOk('спуск состоялся — бой на раунды энергии не тратит [DECISION §0]');
+        ctx.printOk('спуск состоялся — забег начат (бой на раунды энергии не тратит [DECISION §0])');
         ctx.refresh();
+        return;
+      }
+      // --- [M13.1 · R7] ×7 подкоманд забега
+      if (sub === 'run') {
+        const v = api['mine.run']() as RunViewShape;
+        printRun(ctx, v);
+        return;
+      }
+      if (sub === 'pick') {
+        if (args[1] === undefined) {
+          return ctx.printErr('укажите выбор: mine pick <1..3> (карта) · mine pick 0 (свиток выхода) · mine pick p<N> (зелье)');
+        }
+        const r = api['mine.pick'](args[1]) as R<RunViewShape>;
+        if (!r.ok) return ctx.printErr(r.error);
+        printRun(ctx, r.value);
+        ctx.refresh();
+        return;
+      }
+      if (sub === 'gen') {
+        const rest = args.slice(1);
+        let seed: string | undefined;
+        const si = rest.indexOf('--seed');
+        if (si >= 0) {
+          seed = rest[si + 1];
+          rest.splice(si, 2);
+        }
+        if (rest[0] === undefined) {
+          return ctx.printErr('укажите слой: mine gen <слой> [--seed S] — оракул расклада (12 карт + босс + скрытость)');
+        }
+        const r = api['mine.gen'](rest[0], seed) as R<RunViewShape>;
+        if (!r.ok) return ctx.printErr(r.error);
+        printRun(ctx, r.value);
+        return;
+      }
+      if (sub === 'reveal') {
+        const r = api['mine.reveal']() as R<RunViewShape>;
+        if (!r.ok) return ctx.printErr(r.error);
+        printRun(ctx, r.value);
+        ctx.refresh();
+        return;
+      }
+      if (sub === 'torch') {
+        const r = api['mine.torch'](args[1]) as R<RunViewShape>;
+        if (!r.ok) return ctx.printErr(r.error);
+        printRun(ctx, r.value);
+        ctx.refresh();
+        return;
+      }
+      if (sub === 'upgrades') {
+        if (args[1] === 'buy') {
+          if (args[2] === undefined) {
+            return ctx.printErr('укажите id: mine upgrades.buy <mine_cart|mine_lighting|mine_campgear|mine_lift>');
+          }
+          const r = api['mine.upgrades.buy'](args[2]) as R<RunViewShape>;
+          if (!r.ok) return ctx.printErr(r.error);
+          printRun(ctx, r.value);
+          ctx.refresh();
+          return;
+        }
+        const v = api['mine.upgrades']() as RunViewShape;
+        printRun(ctx, v);
         return;
       }
       if (sub === 'fight' || sub === 'elite' || sub === 'boss') {
@@ -146,7 +219,7 @@ export function registerMineCommands(registry: CommandRegistry): void {
         return;
       }
       ctx.printErr(
-        'mine state | mine mob <id> | mine fight <mobId> [слой] [--seed S] | mine elite <mobId> <модификатор> [слой] [--seed S] | mine enter <слой> | mine boss <слой> [--seed S]',
+        'mine state | mine mob <id> | mine fight <mobId> [слой] [--seed S] | mine elite <mobId> <мод> [слой] [--seed S] | mine enter <слой> | mine boss <слой> [--seed S] | mine run | mine pick <1..3|0|p<N>> | mine gen <слой> [--seed S] | mine reveal | mine torch [i] | mine upgrades [buy <id>]',
       );
     },
   });

@@ -2,9 +2,18 @@
  * Контракты app-шва модуля шахты (распил module.ts по wc-гигиене M12.2,
  * прецедент b4af909). Изоляция (01 §5–§7): модуль НЕ импортирует чужие
  * модули — все межмодульные каналы приходят колбэками витрин/оценщиков.
+ *
+ * [M13.1] новые швы (заявлены поимённо в отчёте): saveId — детерминизм сида
+ * генерации hash(saveId, layer, runNumber); addItemQ — выдача ТОЧНОГО
+ * качества (канон inventory.add с value, для runBag-выдачи); acquireItem —
+ * покупка крота (D23-канон M04: acquire роллит качество + enforceCapacity);
+ * addXp — «пустая пещера» (публичный API M01, П4); addBuff/listBuffs/
+ * removeBuff — штатный Buff-канал ядра kernel.buff (BUF-1: зелья крота;
+ * очистка runs-бафов при runEnded — API владельца, канон 02 §2).
  */
 import type { QualityTier } from '@/shared/types/ids';
 import type { Result } from '@/shared/types/result';
+import type { Modifier } from '@/kernel/bus/stat-bus/modifier';
 
 /** витрина кирки (app-слой: M02 equipped + M10 заточка) */
 export interface PickaxeView {
@@ -33,6 +42,20 @@ export interface MineModuleDeps {
   spendEnterEnergy(reason: string): Result<{ cost: number; current: number; max: number }>;
   /** выдача предмета ТОЧНОГО тира (прецедент craft deliverOutput) */
   addItem(defId: string, tier: QualityTier, qty: number, source: string): Result<unknown>;
+  /** [M13.1] выдача ТОЧНОГО качества (тир + дробное value) — runBag-выдача */
+  addItemQ(defId: string, tier: QualityTier, value: number, qty: number, source: string): Result<unknown>;
+  /** [M13.1] покупка крота: D23-канон M04 — acquire роллит качество, кап соблюдён */
+  acquireItem(defId: string, qty: number, source: string): Result<unknown>;
+  /** [M13.1] XP «пустой пещеры» — публичный API M01 (П4: player.addXp) */
+  addXp(amount: number, reason: string): void;
+  /** [M13.1] штатный Buff-канал ядра (BUF-1: зелья крота, duration runs) */
+  addBuff(mod: Modifier): Result<string>;
+  /** [M13.1] список бафов канала (очистка runs-бафов при runEnded) */
+  listBuffs(): Array<{ mod: Modifier; addedAt: number }>;
+  /** [M13.1] снятие бафа канала по id (API владельца, канон 02 §2) */
+  removeBuff(id: string): boolean;
+  /** [M13.1] saveId — детерминизм сида генерации (карточка §3) */
+  saveId(): string;
   /** проба вместимости (канон D23) */
   canAcquire(defId: string, qty: number): Result<{ fits: boolean; free: number; newEntries: number }>;
   /** HP игрока — публичный API M01 (player.checkHp) */

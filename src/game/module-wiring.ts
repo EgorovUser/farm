@@ -17,6 +17,7 @@ import type { ModuleRegistry } from './module-registry';
 import type { ContentRegistry } from '@/kernel/content/content-registry';
 import type { SaveDirector } from '@/kernel/save/save-director';
 import type { WalletService } from '@/kernel/services/wallet/wallet-service';
+import type { BuffService } from '@/kernel/services/buff/buff-service';
 import { PlayerModule } from './modules/player/module';
 import { InventoryModule } from './modules/inventory/module';
 import { ModForgeModule } from './modules/modforge/module';
@@ -48,6 +49,10 @@ export function wireGameModules(
   content: ContentRegistry,
   save: SaveDirector,
   wallet: WalletService,
+  // [M13.1] Buff-канал ядра + часы: швы mine (зелья крота — kernel.buff,
+  // BUF-1; expiresAt — абсолютной датой от now)
+  buffs: BuffService,
+  now: () => number,
 ): void {
   // --- M01 «Игрок»: активируется ДО init/load — срез и подписки должны
   //     стоять до save.load() (иначе реген пропустит оффлайн-досчёт)
@@ -633,6 +638,29 @@ export function wireGameModules(
           ok: false as const,
           error: 'модуль инвентаря недоступен',
         }) as Result<unknown>,
+      // [M13.1] выдача ТОЧНОГО качества (тир + дробное value) — runBag-выдача
+      addItemQ: (defId, tier, value, qty, source) =>
+        (modules.call('inventory', 'inventory.add', defId, tier, value, qty, source) ?? {
+          ok: false as const,
+          error: 'модуль инвентаря недоступен',
+        }) as Result<unknown>,
+      // [M13.1] покупка крота: D23-канон M04 — acquire (ролл качества + кап)
+      acquireItem: (defId, qty, source) =>
+        (modules.call('inventory', 'inventory.acquire', defId, qty, source) ?? {
+          ok: false as const,
+          error: 'модуль инвентаря недоступен',
+        }) as Result<unknown>,
+      // [M13.1] XP «пустой пещеры» — публичный API M01 (П4)
+      addXp: (amount, reason) => {
+        modules.call('player', 'player.addXp', amount, reason);
+      },
+      // [M13.1] штатный Buff-канал ядра kernel.buff (BUF-1: зелья крота;
+      // очистка runs-бафов при runEnded — API владельца, канон 02 §2)
+      addBuff: (mod) => buffs.add(mod, now()),
+      listBuffs: () => buffs.list(),
+      removeBuff: (id) => buffs.remove(id),
+      // [M13.1] saveId — детерминизм сида генерации hash(saveId,layer,runNumber)
+      saveId: () => save.getSaveId(),
       canAcquire: (defId, qty) =>
         (modules.call('inventory', 'inventory.canAcquire', defId, qty) ?? {
           ok: false as const,

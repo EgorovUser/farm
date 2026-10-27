@@ -21,6 +21,9 @@ import { REWARD_ITEMS } from './catalog-rewards';
 import { FISHING_ITEMS } from './catalog-fishing';
 // [M12.2] трофеи шахты ×9 (G5; прецедент M07 F7 — аддитивно, пул M04 НЕ тронут)
 import { MINE_ITEMS } from './catalog-mine';
+// [M13.1] товары крота: зелья (BUF-1 useAction modifier), факел, свиток
+// выхода (прецедент трофеев M12.2 — аддитивно, пул M04 НЕ тронут)
+import { MINERUN_ITEMS } from './catalog-minerun';
 
 export type ItemType =
   | 'tool'
@@ -57,8 +60,8 @@ export interface ItemDef extends PricedItemDef {
   unlock?: Condition;
 }
 
-/** полный каталог: seeds (10) + goods (23) + shelves (11) + gear (14) + craft (14) + rewards (8) + fishing (19) + mine (9) = 108 */
-export const ITEMS: ItemDef[] = [...SEED_ITEMS, ...GOODS_ITEMS, ...SHELF_ITEMS, ...GEAR_ITEMS, ...CRAFT_ITEMS, ...REWARD_ITEMS, ...FISHING_ITEMS, ...MINE_ITEMS];
+/** полный каталог: seeds (10) + goods (23) + shelves (11) + gear (14) + craft (14) + rewards (8) + fishing (19) + mine (9) + minerun (4) = 112 */
+export const ITEMS: ItemDef[] = [...SEED_ITEMS, ...GOODS_ITEMS, ...SHELF_ITEMS, ...GEAR_ITEMS, ...CRAFT_ITEMS, ...REWARD_ITEMS, ...FISHING_ITEMS, ...MINE_ITEMS, ...MINERUN_ITEMS];
 
 export const RARITY_ORDER: Record<Rarity, number> = {
   common: 0,

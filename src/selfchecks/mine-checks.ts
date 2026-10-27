@@ -157,19 +157,20 @@ export async function runMineChecks(): Promise<CheckGroup> {
     const apiKeys = Object.keys(mounted?.api ?? {}).sort();
     const info = f.game.save.info();
     results.push(
-      check('манифест M12 = факту (F2 + [M12.2 · G6] bump 1.0.0 → 1.1.0, прецедент F16 M11.2): version 1.1.0; publicApi РОВНО ×6 = [mine.state, mine.mob, mine.fight, mine.elite, mine.enter, mine.boss]; eventsPublished РОВНО ×3 = [mine.turnResolved, mine.enemyKilled, mine.bossKilled] (каталог 02 §4 С ФАЗЫ 0 — НЕ редактировался; runStarted/runEnded — домен M13); eventsSubscribed [] (бой синхронный); modifierProviders [] (runBuff — M13); taskExecutors [] (реестр задач 15 ЦЕЛ — работники шахте НЕ служат, карточка M11 §8); statsCounters []; save info: v15, срезов 19 (+mine)', () =>
+      check('манифест M12/M13 = факту (F2 + [M12.2 · G6] bump 1.0.0 → 1.1.0 + [M13.1 · R7] bump 1.1.0 → 1.2.0, прецеденты F16 M11.2/чека 26 FIX-M11): version 1.2.0; publicApi РОВНО ×13 = [mine.state, mine.mob, mine.fight, mine.elite, mine.enter, mine.boss + РОВНО ×7 забега: mine.run, mine.pick, mine.gen, mine.reveal, mine.torch, mine.upgrades, mine.upgrades.buy]; eventsPublished РОВНО ×6 = [mine.turnResolved, mine.enemyKilled, mine.bossKilled + mine.runStarted, mine.runEnded, mine.cardResolved — строки Task 70 каталога 02 §4]; eventsSubscribed РОВНО ×1 = [player.hpChanged] (идемпотентный death-обработчик R4); modifierProviders РОВНО ×1 = [runBuffProvider]; priceModifierProviders += mineTraderProvider [DECISION M13.1 — кротовая наценка, 04 §1]; taskExecutors [] (реестр задач 15 ЦЕЛ); statsCounters []; save info: v15, срезов 19 (+mine)', () =>
         manifest !== undefined &&
-        manifest.version === '1.1.0' &&
-        JSON.stringify(apiKeys) === JSON.stringify(['mine.boss', 'mine.elite', 'mine.enter', 'mine.fight', 'mine.mob', 'mine.state']) &&
-        JSON.stringify([...(manifest.eventsPublished ?? [])].sort()) === JSON.stringify(['mine.bossKilled', 'mine.enemyKilled', 'mine.turnResolved']) &&
-        JSON.stringify(manifest.eventsSubscribed) === JSON.stringify([]) &&
-        JSON.stringify(manifest.modifierProviders) === JSON.stringify([]) &&
+        manifest.version === '1.2.0' &&
+        JSON.stringify(apiKeys) === JSON.stringify(['mine.boss', 'mine.elite', 'mine.enter', 'mine.fight', 'mine.gen', 'mine.mob', 'mine.pick', 'mine.reveal', 'mine.run', 'mine.state', 'mine.torch', 'mine.upgrades', 'mine.upgrades.buy']) &&
+        JSON.stringify([...(manifest.eventsPublished ?? [])].sort()) === JSON.stringify(['mine.bossKilled', 'mine.cardResolved', 'mine.enemyKilled', 'mine.runEnded', 'mine.runStarted', 'mine.turnResolved']) &&
+        JSON.stringify(manifest.eventsSubscribed) === JSON.stringify([{ event: 'player.hpChanged', handler: 'onHpChanged' }]) &&
+        JSON.stringify(manifest.modifierProviders) === JSON.stringify(['runBuffProvider']) &&
+        JSON.stringify(manifest.priceModifierProviders) === JSON.stringify(['mineTraderProvider']) &&
         JSON.stringify(manifest.taskExecutors) === JSON.stringify([]) &&
         JSON.stringify(manifest.statsCounters) === JSON.stringify([]) &&
         info.saveVersion === 15 && info.slices.length === 19 && info.slices.includes('mine') &&
         f.game.tasks.list().length === 15, {
-        expected: '1.1.0; api ×6; события ×3; подписки/провайдеры/исполнители ПУСТЫ; tasks 15; v15/19',
-        actual: `${manifest?.version}; api ${apiKeys.length}; события ${(manifest?.eventsPublished ?? []).length}; tasks ${f.game.tasks.list().length}; v${info.saveVersion}/${info.slices.length}`,
+        expected: '1.2.0; api ×13; события ×6; подписка hpChanged; runBuff + mineTrader; tasks 15; v15/19',
+        actual: `${manifest?.version}; api ${apiKeys.length}; события ${(manifest?.eventsPublished ?? []).length}; подписки ${(manifest?.eventsSubscribed ?? []).length}; провайдеры ${(manifest?.modifierProviders ?? []).length}+${(manifest?.priceModifierProviders ?? []).length}; tasks ${f.game.tasks.list().length}; v${info.saveVersion}/${info.slices.length}`,
       }),
     );
     f.dispose();

@@ -212,7 +212,7 @@ export function createGame(
   const director = new GameDirector(modules, moduleContext);
 
   // --- модули M01–M09: регистрация + активация + колбэки app-слоя (П4)
-  wireGameModules(director, modules, content, save, wallet);
+  wireGameModules(director, modules, content, save, wallet, buffs, () => clock.now());
 
   const game: Game = {
     clock,

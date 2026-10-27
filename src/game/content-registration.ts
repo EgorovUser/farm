@@ -79,12 +79,21 @@ import { MINE_MOBS, ELITE_MODS } from '@/content/mine/mobs';
 import { MINE_TABLE } from '@/content/mine/table';
 import { MINE_BOSSES } from '@/content/mine/bosses';
 import { MINE_LAYERS } from '@/content/mine/layers';
+// [M13.1] контент забега: карты ×12 + факел + статусы + крот + насыщенность
+// + улучшения ×4 (бриф R2–R6; числа — только здесь)
+import { MINE_CARDS, MINE_TORCH, MINE_LAYER_STATUSES, MINE_RUN_EFFECTS } from '@/content/mine/cards';
+import { MINE_UPGRADES } from '@/content/mine/upgrades';
 import {
   eliteModsSchema,
   mineMobsSchema,
   mineTableSchema,
   mineBossesSchema,
   mineLayersSchema,
+  mineCardsSchema,
+  mineTorchSchema,
+  mineLayerStatusesSchema,
+  mineRunEffectsSchema,
+  mineUpgradesSchema,
 } from '@/content/mine/schemas';
 import { z } from 'zod';
 import { basesTableSchema, economySchema, itemsSchema, rngSchema, rollTablesSchema, timeSchema } from '@/kernel/content/schemas';
@@ -187,4 +196,12 @@ export function registerContent(content: ContentRegistry): void {
   //     дропы-таблицы — данные; сверка defId против 'items' — self-группа M12)
   content.register('mine.bosses', mineBossesSchema, MINE_BOSSES);
   content.register('mine.layers', mineLayersSchema, MINE_LAYERS);
+  // --- [M13.1] контент забега (карточка M13 §2–§3: карты/факел/статусы/крот/
+  //     насыщенность/run-эффекты предметов + улучшения ×4 — данные, П1;
+  //     свёртка таблиц карточки в один реестровый ключ 'mine.cards')
+  content.register('mine.cards', mineCardsSchema, MINE_CARDS);
+  content.register('mine.cards.torch', mineTorchSchema, MINE_TORCH);
+  content.register('mine.cards.statuses', mineLayerStatusesSchema, MINE_LAYER_STATUSES);
+  content.register('mine.cards.runEffects', mineRunEffectsSchema, MINE_RUN_EFFECTS);
+  content.register('mine.upgrades', mineUpgradesSchema, MINE_UPGRADES);
 }

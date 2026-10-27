@@ -20,7 +20,7 @@ import type { SaveDirector } from '@/kernel/save/save-director';
 import { resolveFight, type FightGear } from './logic/fight';
 import { buildEnemies, buildBossEnemy } from './logic/enemies';
 import { rollOre, rollItem, createWearPickaxe, createRollOf, publishRounds, lootFits, grantMobLoot } from './loot';
-import { buildBossFightView, buildEnterView, buildFightView, type BossFightView, type EnterView, type FightView } from './view';
+import { buildBossFightView, buildFightView, type BossFightView, type FightView } from './view';
 import type { MineState } from './state';
 import type { MineModuleDeps } from './deps';
 
@@ -50,7 +50,6 @@ export interface BattleCtx {
 export function createBattles(x: BattleCtx): {
   runFight(mobId: string, layerRaw: unknown, eliteRaw: unknown, seedRaw: unknown): Result<FightView>;
   runBoss(layerRaw: unknown, seedRaw: unknown): Result<BossFightView>;
-  enter(layerRaw: unknown): Result<EnterView>;
 } {
   const wearPickaxe = createWearPickaxe(x.deps);
   const rollOf = createRollOf(x.rngBus, x.time);
@@ -76,6 +75,10 @@ export function createBattles(x: BattleCtx): {
       );
     }
     const eliteDef = elite !== null ? (x.eliteDefs.find((e) => e.id === elite) ?? null) : null;
+    // [M13.1 · R4] смерть при активном забеге — владеет подписка M13.1
+    // (deaths+1, cozy HP := 1, конец 'death'); снимаем ДО урона (damageHp
+    // синхронно публикует hpChanged → хендлер завершает забег)
+    const hadRun = x.getState().run !== undefined;
     const hpCheck = x.deps.playerHp();
     const s = x.statOf();
     const player = { hp: hpCheck.current, maxHp: hpCheck.max, ...s };
@@ -139,11 +142,14 @@ export function createBattles(x: BattleCtx): {
       });
     }
     if (outcome.result === 'loss') {
-      stats.deaths += 1;
-      // cozy (карточка §5): HP := 1; судьба забега — M13-замок
-      x.deps.healHp(1, 'mine.fight:cozy');
+      // [M13.1 · R4] смерть в забеге — подписка M13.1 (НЕ дублируем);
+      // песочница без забега — канон M12.1 F7 неизменен (cozy + deaths — здесь)
+      if (!hadRun) {
+        stats.deaths += 1;
+        x.deps.healHp(1, 'mine.fight:cozy');
+      }
     }
-    x.setState({ v: 1, stats });
+    x.setState({ ...x.getState(), stats }); // [M13.1] spread: ленивые поля (run?/upgrades?/lastRunDay?) НЕ затираются
     x.markDirty();
     return ok(
       buildFightView(
@@ -181,6 +187,8 @@ export function createBattles(x: BattleCtx): {
     if (boss === undefined) {
       return err(`слой ${def.layer}: босс ${def.bossId} не найден в content/mine/bosses.ts`);
     }
+    // [M13.1 · R4] как в моб-бое: снимаем ДО урона (смерть в забеге — подписка)
+    const hadRun = x.getState().run !== undefined;
     const hpCheck = x.deps.playerHp();
     const s = x.statOf();
     const player = { hp: hpCheck.current, maxHp: hpCheck.max, ...s };
@@ -253,10 +261,13 @@ export function createBattles(x: BattleCtx): {
       }
     }
     if (outcome.result === 'loss') {
-      stats.deaths += 1;
-      x.deps.healHp(1, 'mine.boss:cozy'); // cozy (G11: смерть фазу не открывает)
+      // [M13.1 · R4] смерть в забеге — подписка M13.1 (НЕ дублируем)
+      if (!hadRun) {
+        stats.deaths += 1;
+        x.deps.healHp(1, 'mine.boss:cozy'); // cozy (G11: смерть фазу не открывает)
+      }
     }
-    x.setState({ v: 1, stats });
+    x.setState({ ...x.getState(), stats }); // [M13.1] spread: ленивые поля (run?/upgrades?/lastRunDay?) НЕ затираются
     x.markDirty();
     // витрина: мета включает ПОТЕНЦИАЛЬНЫЕ призывы (ключи <mobId>#s1..sN)
     const sm = enemy.boss?.summon;
@@ -284,17 +295,6 @@ export function createBattles(x: BattleCtx): {
     );
   };
 
-  // вход (G4): гейты G3 + энергия 20 РОВНО один раз; бой без энергии [DECISION §0]
-  const enter = (layerRaw: unknown): Result<EnterView> => {
-    const layerDef = x.layerOf(layerRaw);
-    if (!layerDef.ok) return err(layerDef.error);
-    const def = layerDef.value;
-    const gate = x.layerGate(def);
-    if (!gate.ok) return err(gate.error);
-    const spent = x.deps.spendEnterEnergy(`спуск в шахту (слой ${def.layer})`);
-    if (!spent.ok) return err(spent.error);
-    return ok(buildEnterView(def, gate.value.pick, spent.value, x.layers.length));
-  };
-
-  return { runFight, runBoss, enter };
+  return { runFight, runBoss };
+  // [M13.1] enter перенесён в module.enterRun (гейты + энергия + СТАРТ ЗАБЕГА R1);
 }

@@ -197,3 +197,169 @@ export const mineLayersSchema = z
     },
     { message: 'unlock слоя n = ачивка ach_mine_boss_<n−1> (G3)' },
   );
+
+// ============================================================ [M13.1] карты забега
+// Карточка M13 §2 ×12 kinds + факел/статусы/крот/насыщенность (бриф R2–R5).
+// Пейлоады — ДАННЫЕ: схема проверяет форму по kind (P5: неизвестный kind =
+// отказ загрузки с путём поля, «молчаливого NaN» нет).
+
+const mineCardKindSchema = z.enum([
+  'empty',
+  'oreVein',
+  'chest',
+  'collapse',
+  'mob',
+  'boss',
+  'altar',
+  'spring',
+  'campfire',
+  'trader',
+  'camp',
+  'exit',
+]);
+
+const altarOfferSchema = z
+  .object({
+    label: z.string().min(1),
+    price: z
+      .object({
+        gold: z.number().int().min(1).optional(),
+        hp: z.number().int().min(1).optional(),
+        item: z.object({ defId: z.string().regex(/^[a-z0-9_]+$/), qty: z.number().int().min(1) }).strict().optional(),
+      })
+      .strict(),
+    mod: z
+      .object({
+        stat: z.string().min(1),
+        op: z.enum(['flat', 'inc', 'more']),
+        value: z.number().finite(),
+        label: z.string().min(1),
+      })
+      .strict(),
+  })
+  .strict();
+
+const campEventSchema = z
+  .object({
+    text: z.string().min(1),
+    choices: z
+      .array(
+        z
+          .object({
+            label: z.string().min(1),
+            effect: z
+              .object({
+                heal: z.number().int().min(1).optional(),
+                gold: z.tuple([z.number().int().min(1), z.number().int().min(1)]).optional(),
+                torches: z.number().int().min(1).optional(),
+              })
+              .strict(),
+          })
+          .strict(),
+      )
+      .min(1),
+    autoPick: z.number().int().min(0),
+  })
+  .strict();
+
+export const mineCardsSchema = z
+  .array(
+    z
+      .object({
+        id: z.string().regex(/^card_[a-z0-9_]+$/),
+        kind: mineCardKindSchema,
+        hidden: z.boolean(),
+        weight: z.number().int().min(0),
+        payload: z.unknown(),
+        unlock: z.unknown().optional(),
+      })
+      .strict(),
+  )
+  .min(12)
+  .refine((rows) => {
+    // ×12 поимённо (карточка §2): ровно по одному kind, boss — вес 0
+    const kinds = new Set<string>(rows.map((r) => r.kind));
+    if (kinds.size !== rows.length) return false;
+    const expected: string[] = [
+      'empty',
+      'oreVein',
+      'chest',
+      'collapse',
+      'mob',
+      'boss',
+      'altar',
+      'spring',
+      'campfire',
+      'trader',
+      'camp',
+      'exit',
+    ];
+    for (const k of expected) if (!kinds.has(k)) return false;
+    return rows.find((r) => r.kind === 'boss')?.weight === 0;
+  }, { message: 'карты ×12 поимённо, kind boss — вес 0 (в колонки не роллится)' });
+
+export const mineTorchSchema = z
+  .object({ mode: z.enum(['direct', 'luck']), base: z.number().int().min(1).max(100) })
+  .strict();
+
+export const mineLayerStatusesSchema = z
+  .array(
+    z
+      .object({
+        layer: z.number().int().min(1),
+        status: z.enum(['cold', 'dark', 'poison', 'hot']).nullable(),
+        effect: z
+          .object({
+            stat: z.string().min(1),
+            op: z.enum(['flat', 'inc', 'more']),
+            value: z.number().finite(),
+            label: z.string().min(1),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict(),
+  )
+  .min(1)
+  .refine((rows) => rows.every((r, i) => r.layer === i + 1), {
+    message: 'статусы нумеруются по слоям подряд от 1',
+  });
+
+export const mineRunEffectsSchema = z
+  .array(
+    z
+      .object({
+        defId: z.string().regex(/^[a-z0-9_]+$/),
+        effect: z.literal('exit'),
+        label: z.string().min(1),
+      })
+      .strict(),
+  )
+  .min(1);
+
+// ============================================================ [M13.1] улучшения ×4
+// Бриф R6 (из ×6 карточки §3; Барак/Отряд — M13.2-замок): Вагонёт/Освещение/
+// Оборудование лагеря/Лифт; effect — ДАННЫЕ, код читает обобщённо (П5).
+
+export const mineUpgradesSchema = z
+  .array(
+    z
+      .object({
+        id: z.string().regex(/^mine_[a-z0-9_]+$/),
+        name: z.string().min(1),
+        desc: z.string().min(1),
+        costGold: z.number().int().min(1),
+        effect: z.union([
+          z.object({ t: z.literal('bagSlots'), bagSlots: z.number().int().min(1) }).strict(),
+          z.object({ t: z.literal('lighting'), hiddenChanceInc: z.number().int().max(0) }).strict(),
+          z.object({ t: z.literal('campgear'), perCards: z.number().int().min(1), hp: z.number().int().min(1) }).strict(),
+          z.object({ t: z.literal('lift'), startColumn: z.number().int().min(2).max(4) }).strict(),
+        ]),
+      })
+      .strict(),
+  )
+  .min(4)
+  .refine((rows) => {
+    const kinds = new Set(rows.map((r) => r.effect.t));
+    return ['bagSlots', 'lighting', 'campgear', 'lift'].every((k) => kinds.has(k as 'bagSlots' | 'lighting' | 'campgear' | 'lift'));
+  }, { message: 'улучшения ×4: Вагонёт/Освещение/Оборудование/Лифт (R6)' });

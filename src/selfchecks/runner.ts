@@ -44,6 +44,7 @@ import { runFishChecks } from './fish-checks';
 import { runLakeChecks } from './lake-checks';
 import { runWorkersChecks } from './workers-checks';
 import { runMineChecks } from './mine-checks';
+import { runMineRunChecks } from './mine-run-checks';
 // [REG-1] живой реестр: агрегатор рантайм-реестров (модули/шины/сервисы/
 // команды/контент) — списки расширяются сами (запрос спеки между M12.1 и M12.2)
 import { runRegistryChecks } from './registry-checks';
@@ -124,6 +125,8 @@ export async function runAllSelfChecks(): Promise<CheckGroup[]> {
     // --- M12 «Шахта» (сеанс M12.1 — часть 1: чистый боевой движок +
     //     мобы/элиты + витрины + срез v15; бриф SESSION-M12.1 F9)
     await runMineChecks(),
+    // --- M13 «Забег» (сеанс M13.1 — карточный рогалик: генерация/карты/факел/runBag)
+    await runMineRunChecks(),
     // --- Реестр (сеанс REG-1): живой обзор — модули M01–M15/шины/сервисы/
     //     команды/контент без ручных списков (агрегатор registry-overview)
     await runRegistryChecks(),
