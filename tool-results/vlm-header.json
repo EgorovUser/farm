@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "1) **Yes.** The header contains the title \"КОРНИ И РУДА\", the subtitle \"СОУЗ-ЭКОНОМИЧЕСКИЙ RPG-ИНКУБАТОР · ЯДРО + 9 МОДУЛЕЙ\", a \"Фаза 3\" badge line listing modules M01-M15, and a status indicator with a live clock (06:40:19).\n2) **No.** The text is fully visible with no truncation, overlapping, or awkward wrapping.\n3) **Yes.** The amber/zinc color scheme is applied consistently; there is no unstyled white text or default browser styling.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1792910443,
+  "id": "20261025144041acd17a06359f44ca",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "20261025144041acd17a06359f44ca",
+  "usage": {
+    "completion_tokens": 137,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 287,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 424
+  }
+}

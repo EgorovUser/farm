@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "**Visible tab labels (left to right):**\n1. Статьи\n2. Навыки\n3. Бафы\n4. Роллы\n5. Pity\n6. Счёт\n7. Инвентарь\n\n**Answer regarding the rightmost label:**\nThe rightmost visible tab label (**Инвентарь**) is **complete**. None of its final letters are cut off at the right edge of the strip; the word ends with a clear \"р\" (r) followed by adequate padding before the image boundary.\n\n**Character-by-character transcription of the rightmost label:**\nИ-н-в-е-н-т-а-р-ь",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1792910466,
+  "id": "2026102514410424312c6449f1414f",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "2026102514410424312c6449f1414f",
+  "usage": {
+    "completion_tokens": 145,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 463,
+    "prompt_tokens_details": {
+      "cached_tokens": 2
+    },
+    "total_tokens": 608
+  }
+}

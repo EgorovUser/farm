@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "**Image 1: 'МОДУЛИ' Panel**\n\n*   **Panel Title:** МОДУЛИ\n*   **Header/Status (Top Right):** 9 активны\n*   **Row 1:** Label: `player` | Value: `orea: player` | Version: `v1.0.0`\n*   **Row 2 (Obstructed):** Label: `[Hidden by popup]` | Value: `inventory` | Version: `v1.5.0`\n*   **Row 3:** Label: `modforge` | Value: `oues: modforge` | Version: `v1.3.0`\n*   **Popup Overlay Text:** `N` | `1 issue` | `X` (close icon)\n*   **Boundary/Overlap Notes:** The text for the second row's label is completely covered by a red \"1 issue\" notification popup. The bottom edge of the panel appears to be cut off by the image boundary.\n\n***\n\n**Image 2: 'СЕЙВ' Panel**\n\n*   **Panel Title:** [Not visible]\n*   **Rows of Text:** [None visible]\n*   **Boundary/Overlap Notes:** The image is almost entirely black/empty. No text, panel borders, or the title 'СЕЙВ' are visible within this crop.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1792910593,
+  "id": "202610251443085bee4c04bbb04b2b",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "202610251443085bee4c04bbb04b2b",
+  "usage": {
+    "completion_tokens": 284,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 334,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 618
+  }
+}

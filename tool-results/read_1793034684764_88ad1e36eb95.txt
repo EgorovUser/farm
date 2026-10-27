@@ -1,0 +1,500 @@
+     1→# FIX-M11 — микро-сеанс правки MISS-1 аудита AUDIT-M11: проводка капа Домика (105) в load-путь
+     2→
+     3→> 2026-10-26 · Кодинг-бот (среда проекта). Служебный отчёт по брифу FIX-M11 (§0–§7).
+     4→> База: HEAD `01ec2a3` = док-коммит AUDIT-M11-REPORT (ровно `AUDIT-M11-REPORT.md` + `worklog.md`,
+     5→> 2 files changed, 147 insertions — сверено `git show --stat`). Цепочка ниже базы = шапке
+     6→> AUDIT-M11-REPORT: `01ec2a3` ← `5aa7b50` ← `078516d` ← `d44a00b` ← `17fb83c` ← `d975146` ←
+     7→> `2a59def` ← `764cc9b` ← `2231100` ← `a17481a` ← `31cb5b2` ← `4683b2e` ← `42ac8a0` ← `64805d2`.
+     8→> Вход: живой сейв **v14/18**, saveId `04c82f3f-5120-4034-9a57-d344ee8ac69a` (НОВЫЙ — среда
+     9→> пересобрана, как у аудита; работники 0/3, Домик не куплен, хранилище indexeddb).
+    10→> Финал: честная новая игра `c4463807-c328-4a5b-91e7-c018b6f0c658` (v14/18, post-wipe тишина).
+    11→> Режим: живой, ОДИН дефект (MISS-1 P3) + чек-расширение. Менялось — строго §2 брифа.
+    12→
+    13→---
+    14→
+    15→## 1. Старт-гейт 5/5 (копипасты)
+    16→
+    17→1. **git log / док-коммит**: HEAD `01ec2a33b3285d1b4ee22175d6fcc2ddf7f413f2`; `git show --stat 01ec2a3` →
+    18→   `AUDIT-M11-REPORT.md | 125 +++` + `worklog.md | 22 ++` = ровно 2 файла, платформенных артефактов сверху НЕТ.
+    19→   Дерево чисто (`git status` до правок — пусто). Расхождений класса «переписывание» нет.
+    20→2. **selftest ×2 байт-в-байт** (headless, до правок):
+    21→   ```
+    22→   ИТОГ: 697/697 проверок зелёные
+    23→   f940eb60c691ff0a4971f7372692d862  -   (форма stdout+stderr combined, прогон 1)
+    24→   f940eb60c691ff0a4971f7372692d862  -   (прогон 2)
+    25→   ```
+    26→   = канону выхода M11.2/аудита. Групп 44; «M11 Работники: 26/26».
+    27→3. **Браузерный входной снимок ДО первой правки** (страница перезагружена на коде базы):
+    28→   `ИТОГ: 697/697 проверок зелёные — ядро, модули и правки FIX в норме` · pageerror 0
+    29→   (единственный console.error — намеренный тест упавшего провайдера `selfcheck.bad` из
+    30→   stat-checks, входит в канон вывода). Витрины входа: `save info` → «версия формата: 14 ·
+    31→   saveId: 04c82f3f-5120-4034-9a57-d344ee8ac69a · срезы: 18 (craft, farm, fishing, forge,
+    32→   inventory, kernel.buff, kernel.clock, kernel.pity, kernel.stash, kernel.stats, kernel.wallet,
+    33→   lake, modforge, pen, player, quests, shop, workers)»; `workers list` → «Работники: 0/3 …
+    34→   никого не нанято»; `workers upgrades` → «[ ] Домик работников (upg_worker_house) · 300з».
+    35→4. **tsc 0 по `src/` + lint 0** (явной строкой): `bunx tsc --noEmit -p tsconfig.json | grep -c "^src/"` →
+    36→   **0** (остаточные ошибки только в `examples/` — окружение, существовали до правки);
+    37→   `bun run lint` → вывод пуст, **0 ошибок/warnings**.
+    38→5. **Вход живой**: п.3 (saveId полный, v14/18, витрины сняты).
+    39→
+    40→Красных пунктов нет (fetch origin не выполнялся — уведомление; push — пользовательская операция).
+    41→
+    42→## 2. Правки пофайлово (строго §2; 6 файлов, +116/−21)
+    43→
+    44→### 2.1 (P3 — закрывает MISS-1) `src/game/modules/workers/state.ts` (225 строк)
+    45→
+    46→ЕДИНАЯ точка капа (FX1) — чистая функция в state.ts (лист модуля: только type-импорты прежде,
+    47→теперь + два ЗНАЧЕНИЯ контента; циклов нет — content не импортирует game). Числа НЕ хардкодятся:
+    48→базовый кап из `WORKERS_TABLE.mood.max`, прирост из `WORKER_UPGRADES` (деф с эффектом `house`).
+    49→
+    50→```diff
+    51→ import type { WorkerObjectId, WorkerProfession } from '@/content/workers/table';
+    52→+import { WORKERS_TABLE } from '@/content/workers/table';
+    53→+import type { WorkerUpgradeDef } from '@/content/workers/upgrades';
+    54→+import { WORKER_UPGRADES } from '@/content/workers/upgrades';
+    55→+
+    56→+/** [FIX-M11 · FX1] ЕДИНАЯ точка капа настроения (MISS-1 аудита AUDIT-M11):
+    57→+ *  кап вычисляется ИЗ ДАННЫХ — владение улучшением «Домик» (деф с эффектом
+    58→+ *  house, upg_worker_house) в срезе `upgrades?` → базовый кап таблицы
+    59→+ *  (mood.max) + прирост из content/workers upgrades-дефов (Домик +5 → 105).
+    60→+ *  Числа НЕ хардкодятся в логике (канон «числа в content»). Читают ОДНУ
+    61→+ *  точку: sanitize load-пути (срез сам содержит upgrades? — доступно в
+    62→+ *  sanitize(data), аудит §9 п.1), премия bonus (hire) и moodSet (dev);
+    63→+ *  dayPass уже клэмпит к moodCap — FX1 её НЕ меняет, переиспользует. */
+    64→+export function moodCapOf(
+    65→+  state: Pick<WorkersState, 'upgrades'>,
+    66→+  table: WorkersTable = WORKERS_TABLE,
+    67→+  defs: readonly WorkerUpgradeDef[] = WORKER_UPGRADES,
+    68→+): number {
+    69→+  const owned = state.upgrades ?? [];
+    70→+  const house = defs.find((u) => u.effect.t === 'house' && owned.includes(u.id));
+    71→+  return table.mood.max + (house && house.effect.t === 'house' ? house.effect.moodCapBonus : 0);
+    72→+}
+    73→```
+    74→
+    75→Клэмп sanitize (та самая строка ~151 из §8 аудита) — граница из данных входящего среза:
+    76→
+    77→```diff
+    78→-function sanitizeWorker(raw: unknown): WorkerInstance | null {
+    79→+function sanitizeWorker(raw: unknown, moodCap: number): WorkerInstance | null {
+    80→…
+    81→     object: w.object,
+    82→-    mood: Math.min(100, Math.max(0, num(w.mood, 50))),
+    83→+    // [FIX-M11 · MISS-1] верхняя граница = капу Домика из ДАННЫХ среза
+    84→+    // (moodCapOf, FX1): load/import перестаёт срезать легальное живое
+    85→+    // состояние 101–105 (с Домиком); без Домика клэмп к базовому 100 жив
+    86→+    mood: Math.min(moodCap, Math.max(0, num(w.mood, 50))),
+    87→…
+    88→-  const seen = new Set<string>();
+    89→-  const hired = s.hired
+    90→-    .map(sanitizeWorker)
+    91→-    .filter((w): w is WorkerInstance => w !== null && !seen.has(w.defId) && seen.add(w.defId) !== undefined);
+    92→   const upgrades = Array.isArray(s.upgrades)
+    93→     ? s.upgrades.filter((u): u is string => typeof u === 'string' && u.length > 0)
+    94→     : [];
+    95→+  // [FIX-M11 · MISS-1] кап load-пути — из владения Домиком в САМОМ срезе
+    96→+  // (upgrades? уже распарсен выше): 101–105 легальны при Домике (105),
+    97→+  // без Домика — базовый кап 100 (оракул отрицания)
+    98→+  const moodCap = moodCapOf({ upgrades });
+    99→+  const seen = new Set<string>();
+   100→+  const hired = s.hired
+   101→+    .map((w) => sanitizeWorker(w, moodCap))
+   102→+    .filter((w): w is WorkerInstance => w !== null && !seen.has(w.defId) && seen.add(w.defId) !== undefined);
+   103→```
+   104→
+   105→Миграций НЕТ; срез-схема без изменений (поведение load-пути, не схема); нижняя граница 0
+   106→(table.mood.min) не тронута — дифф минимален по §2.1. Существующая точка dayPass НЕ менялась.
+   107→
+   108→### 2.2 Три сопутствующие проводки (та же природа, §8 аудита)
+   109→
+   110→**`src/game/modules/workers/upgrades.ts` (142)** — метод `WorkersUpgrades.moodCapOf()` делегирует
+   111→единой точке (иначе точек стало бы две — нарушение FX1):
+   112→
+   113→```diff
+   114→+import { moodCapOf } from './state';
+   115→…
+   116→-  /** Домик: кап настроения (базовый кап + бонус; без Домика — таблица) */
+   117→+  /** Домик: кап настроения (базовый кап + бонус; без Домика — таблица).
+   118→+   *  [FIX-M11 · FX1] делегирует ЕДИНОЙ точке moodCapOf(state) из state.ts —
+   119→+   *  те же ДАННЫЕ (владение upgrades? + прирост из content/workers), что и
+   120→+   *  sanitize load-пути / бонус / moodSet: расхождение капов невозможно */
+   121→   moodCapOf(): number {
+   122→-    const house = this.d.upgradesDefs.find((u) => u.effect.t === 'house' && this.has(u.id));
+   123→-    return this.d.table.mood.max + (house && house.effect.t === 'house' ? house.effect.moodCapBonus : 0);
+   124→+    return moodCapOf(this.d.getState(), this.d.table, this.d.upgradesDefs);
+   125→   }
+   126→```
+   127→
+   128→Вызывающие точки module.ts (dayPass-депсы + витрина знаменателя) НЕ изменились — сигнатура метода та же.
+   129→
+   130→**`src/game/modules/workers/hire.ts` (211)** — премия с капом (§2.2 п.1: mood 96 + 10 → 105, не 100):
+   131→
+   132→```diff
+   133→-import { canonicalWorker, isSick } from './state';
+   134→+import { canonicalWorker, isSick, moodCapOf } from './state';
+   135→…
+   136→-    const next = withMood({ ...w, lastBonusAt: now }, this.d.table.mood.bonus, this.d.table);
+   137→+    // [FIX-M11 · FX2] премия — с капом из ДАННЫХ (единая точка moodCapOf):
+   138→+    // с Домиком mood 96 + 10 → 105 (не обрезается на 100)
+   139→+    const next = withMood(
+   140→+      { ...w, lastBonusAt: now },
+   141→+      this.d.table.mood.bonus,
+   142→+      this.d.table,
+   143→+      moodCapOf(state, this.d.table),
+   144→+    );
+   145→```
+   146→
+   147→**`src/game/modules/workers/dev.ts` (57)** — moodSet-валидация ≤ капу (§2.2 п.2):
+   148→
+   149→```diff
+   150→+import { moodCapOf } from './state';
+   151→…
+   152→-  /** dev: установка настроения (кулдауны/болезни не трогаются) */
+   153→+  /** dev: установка настроения (кулдауны/болезни не трогаются).
+   154→+   *  [FIX-M11 · FX2] валидация ≤ капу из ДАННЫХ (единая точка moodCapOf):
+   155→+   *  при живом Домике 101–105 легальны (кап 105); 106 — отказ; без
+   156→+   *  Домика кап 100 → 101 — отказ; withMood — с тем же капом (иначе
+   157→+   *  принятые 103 срезались бы при записи) */
+   158→   moodSet(idx: number, value: number): Result<{ idx: number; mood: number }> {
+   159→     const state = this.d.getState();
+   160→     const w = state.hired[idx];
+   161→     if (!w) return err(`работник №${idx} не найден (workers list — витрина)`);
+   162→-    if (!Number.isFinite(value) || value < this.d.table.mood.min || value > this.d.table.mood.max) {
+   163→-      return err(`настроение: целое ${this.d.table.mood.min}..${this.d.table.mood.max}`);
+   164→+    const moodCap = moodCapOf(state, this.d.table);
+   165→+    if (!Number.isFinite(value) || value < this.d.table.mood.min || value > moodCap) {
+   166→+      return err(`настроение: целое ${this.d.table.mood.min}..${moodCap}`);
+   167→     }
+   168→-    const next = withMood(w, Math.round(value) - w.mood, this.d.table);
+   169→+    const next = withMood(w, Math.round(value) - w.mood, this.d.table, moodCap);
+   170→```
+   171→
+   172→**Заявленное следствие §2.2 (открыто, НЕ молчаливо)**: проводка moodSet потребовала двух точек
+   173→сверх буквального перечня §8 аудита — (а) `withMood` с капом в той же функции (иначе валидация
+   174→приняла бы 103, а запись срезала бы до 100 — витрина приёмки §5.4 «103/105» невыполнима);
+   175→(б) принт ответа mood set знаменателем из витрины (иначе копипаста приёмки самопротиворечива
+   176→«103/100» — та же унификация, что предписана принту bonus). Природа та же — неполная проводка
+   177→капа; обе точки — тело той самой команды, валидацию которой меняет §2.2.
+   178→
+   179→**`src/debug/commands-workers.ts` (256)** — принты знаменателем из витрины (§2.2 п.3 + заявленное
+   180→следствие для mood set):
+   181→
+   182→```diff
+   183→       if (sub === 'bonus') {
+   184→…
+   185→         const r = api['workers.bonus'](args[1]) as R<{ cost: number; mood: number }>;
+   186→         if (!r.ok) return ctx.printErr(r.error);
+   187→+        // [FIX-M11 · FX2] знаменатель — из витрины moodCap (Домик → 105),
+   188→+        // не литерал «/100» (унификация с витриной списка «N/кап»)
+   189→+        const cap = (api['workers.list']() as WorkersViewShape).moodCap;
+   190→         ctx.printOk(
+   191→-          `премия выдана: −${r.value.cost}з (×1.5 дневной ЗП, транзакция worker.bonus) · настроение ${r.value.mood}/100 (+10)`,
+   192→+          `премия выдана: −${r.value.cost}з (×1.5 дневной ЗП, транзакция worker.bonus) · настроение ${r.value.mood}/${cap} (+10)`,
+   193→         );
+   194→…
+   195→       const r = api['workers.dev']('mood', args[1], args[2]) as R<{ idx: number; mood: number }>;
+   196→       if (!r.ok) return ctx.printErr(r.error);
+   197→-      ctx.printOk(`настроение работника №${r.value.idx}: ${r.value.mood}/100`);
+   198→+      // [FIX-M11 · FX2 · сопутствующая проводка] знаменатель — из витрины
+   199→+      // moodCap (как в ответе bonus): валидация §2.2 принимает 101–105 при
+   200→+      // Домике — литерал «/100» стал бы самопротиворечием «103/100»
+   201→+      const cap = (api['workers.list']() as WorkersViewShape).moodCap;
+   202→+      ctx.printOk(`настроение работника №${r.value.idx}: ${r.value.mood}/${cap}`);
+   203→```
+   204→
+   205→### 2.3 kernel-дифф = ПУСТ (пятая заморозка) — копипастой
+   206→
+   207→```
+   208→$ git diff src/kernel/ | wc -l
+   209→0
+   210→```
+   211→
+   212→Миграций НЕТ; SAVE_VERSION 14; v14/18 без bump; срез-схема без изменений; манифест 1.1.0 НЕ
+   213→тронут (поведение, не API — bump не нужен); module-wiring монтаж НЕ тронут; чужие модули НЕ
+   214→тронуты (дифф = ровно 6 файлов §2: state/upgrades/hire/dev/commands-workers/workers-upg-checks).
+   215→
+   216→## 3. Чек-расширение 26 (workers-upg-checks.ts, FX3) — дифф чека
+   217→
+   218→Тело чека 26 расширено ДВУМЯ донорами (машинный оракул; имя чека и счётчик НЕ изменены — вывод
+   219→selftest байт-в-байт, см. §5.7): (а) донор с mood 105 + Домик → import → save → re-export —
+   220→срез workers **байт-в-байт** против `canonicalWorkersState(donor105)` (до правки sanitize срезал
+   221→бы до 100 — ассерт красный); (б) оракул отрицания: донор без Домика (mood 100 и 104, upgrades
+   222→нет) → клэмп базового капа 100 жив (104 → 100 — клэмп реально упражнён).
+   223→
+   224→```diff
+   225→+import { canonicalWorkersState, type WorkersState } from '@/game/modules/workers/state';
+   226→…
+   227→     await f3.game.save.save();
+   228→     const raw3 = JSON.parse(f3.game.save.exportJson()) as { modules: { workers: unknown } };
+   229→+    // [FIX-M11 · FX3] roundtrip капа Домика в load-пути (MISS-1): донор с
+   230→+    // mood 105 + Домик → import → save → re-export — 105 сохранён
+   231→+    // байт-в-байт против канонической формы (до правки sanitize срезал
+   232→+    // легальное живое 101–105 до 100); оракул отрицания: донор БЕЗ Домика
+   233→+    // (mood 100 и 104, upgrades нет) → клэмп базового капа 100 жив
+   234→+    const donor105: WorkersState = { v: 1, hired: [mkWorker({ mood: 105 })], upgrades: ['upg_worker_house'] };
+   235→+    const f4 = await makeSeededWorkersGame('fixm11-donor-105');
+   236→+    await f4.game.save.importJson(
+   237→+      JSON.stringify({
+   238→+        saveVersion: 14,
+   239→+        savedAt: WORKERS_T0,
+   240→+        saveId: 'fixm11-donor-105',
+   241→+        contentVersion: '0.1.0-phase0',
+   242→+        modules: { workers: donor105 },
+   243→+        lastSeen: WORKERS_T0,
+   244→+      }),
+   245→+    );
+   246→+    await f4.game.save.save();
+   247→+    const raw4 = JSON.parse(f4.game.save.exportJson()) as { modules: { workers: unknown } };
+   248→+    const donorBase: WorkersState = {
+   249→+      v: 1,
+   250→+      hired: [mkWorker({ mood: 100 }), mkWorker({ defId: 'wk_fixm11_base', mood: 104 })],
+   251→+    };
+   252→+    const f5 = await makeSeededWorkersGame('fixm11-donor-base');
+   253→+    await f5.game.save.importJson(
+   254→+      JSON.stringify({
+   255→+        saveVersion: 14,
+   256→+        savedAt: WORKERS_T0,
+   257→+        saveId: 'fixm11-donor-base',
+   258→+        contentVersion: '0.1.0-phase0',
+   259→+        modules: { workers: donorBase },
+   260→+        lastSeen: WORKERS_T0,
+   261→+      }),
+   262→+    );
+   263→+    await f5.game.save.save();
+   264→+    const raw5 = JSON.parse(f5.game.save.exportJson()) as { modules: { workers: unknown } };
+   265→     f.dispose();
+   266→     f2.dispose();
+   267→     f3.dispose();
+   268→+    f4.dispose();
+   269→+    f5.dispose();
+   270→     results.push(
+   271→       check('сейв F13/F15: v14 БЕЗ миграций … (имя чека НЕ изменено)', () =>
+   272→         parsed.saveVersion === 14 &&
+   273→         JSON.stringify(parsed.modules.workers).includes('upg_worker_house') &&
+   274→         rows2.filter((r) => r.bought).length === 2 &&
+   275→-        JSON.stringify(raw3.modules.workers) === JSON.stringify({ v: 1, hired: [] }), {
+   276→-        expected: 'v14; upgrades в файле; roundtrip 2/5; донор байт-в-байт',
+   277→-        actual: `v${parsed.saveVersion}; bought ${rows2.filter((r) => r.bought).length}/5; донор ${JSON.stringify(raw3.modules.workers)}`,
+   278→+        JSON.stringify(raw3.modules.workers) === JSON.stringify({ v: 1, hired: [] }) &&
+   279→+        JSON.stringify(raw4.modules.workers) === JSON.stringify(canonicalWorkersState(donor105)) &&
+   280→+        JSON.stringify(raw5.modules.workers) ===
+   281→+          JSON.stringify(
+   282→+            canonicalWorkersState({ ...donorBase, hired: donorBase.hired.map((w) => ({ ...w, mood: 100 })) }),
+   283→+          ), {
+   284→+        expected: 'v14; upgrades в файле; roundtrip 2/5; донор байт-в-байт; 105 сохранён; клэмп 100 жив',
+   285→+        actual: `…; 105-донор ${JSON.stringify(raw4.modules.workers)}; база ${JSON.stringify(raw5.modules.workers)}`,
+   286→```
+   287→
+   288→**Счёт чеков НЕ вырос**: группа «M11 Работники» 26/26, итог 697/697 — расширение тела, не счётчик.
+   289→**wc-факт (жёлтый перечень, FX4-carried)**: `workers-upg-checks.ts` **298 → 342** (последствие
+   290→расширения, предсказано брифом FX4; НЕ чинилось — вне объёма микросеанса). Жёлтый перечень теперь:
+   291→module.ts 305 / workers-checks 308 / workers-day-checks 301 / **workers-upg-checks 342** —
+   292→carried до следующего M11-касающегося сеанса. Остальные правленные файлы ≤ 300:
+   293→state 225 / upgrades 142 / hire 211 / dev 57 / commands-workers 256.
+   294→
+   295→## 4. Живые пробы приёмки (копипасты; браузер, код после правок)
+   296→
+   297→Канон живых серий соблюдён: батчи ≤ 25 команд, `save now` в конце каждого, очистка консоли,
+   298→стримы из журнала `roll.log`. Построение Донора-А — живьём вариантом (а) §2.3 (payday force
+   299→при mood 100 + Домик), нормализация двух работников — легальным `mood set` (кап 105 при Домике).
+   300→
+   301→### 4.1 §5.1 Load-путь (сердце фикса)
+   302→
+   303→Донор-А (3 нанятых живьём, Домик + Столовая, знаменатель витрины /105):
+   304→`give gold 5000` → `give egg 10` → наймы [0] Демид (Скотник→Загон №1) / [1] Настасья (Рыбовод→Озеро №1)
+   305→/ [3] Тихон (Фермер→Ферма «Поле») → покупка Домика 300з + Столовой 400з → `mood set ×3 100` →
+   306→`payday force` (вариант-а: Настасья 100+10+3+2 = 115 → **клэмп 105/105** витриной; Демид/Тихон −10 → 95) →
+   307→нормализация `mood set 0 95 / 1 105 / 2 105` → `save now`. Затем **F5 (настоящий load-путь)**:
+   308→
+   309→```
+   310→Работники: 3/3 (лимит = объектам) · зарплаты 74з/день
+   311→  [0] Демид · Скотник · ★★☆☆☆ · 22з/день · 4ч · Загон №1 · настроение 95/105 · премия доступна
+   312→  [1] Настасья · Рыбовод · ★☆☆☆☆ · 12з/день · 4ч · Озеро №1 · настроение 105/105 · премия доступна
+   313→  [2] Тихон · Фермер · ★★★★☆ · 40з/день · 4ч · Ферма «Поле» · настроение 105/105 · премия доступна
+   314→```
+   315→
+   316→**КОНТРАСТ** (копипаста §8 аудита): до правки донор 105/105/95 → load/import → **100/100/95**
+   317→(клэмп sanitize). Теперь 95/105/105 → load → **95/105/105** — легальное живое 101–105 переживает
+   318→load. Donор-Б (минимальный, mood 105 + `upg_worker_house`) → `save import` → витрина:
+   319→
+   320→```
+   321→сейв импортирован: версия 14, saveId fixm11-d… — состояние применено и записано
+   322→Работники: 1/3 (лимит = объектам) · зарплаты 30з/день
+   323→  [0] Проба · Фермер · ★★★☆☆ · 30з/день · 4ч · Ферма «Поле» · настроение 105/105 · премия доступна
+   324→```
+   325→
+   326→Повторный load (F5) + re-save roundtrip — срез workers из ДВУХ независимых движковых экспортов
+   327→(W2 после первого reload+save, W3 после второго reload+save), `cmp` = 0 различий:
+   328→
+   329→```
+   330→{"v":1,"hired":[{"defId":"wk_fixm11_b0","name":"Проба","profession":"farmer","stars":3,
+   331→"salaryPerDay":30,"checkPeriodHours":4,"care":3,"traits":[],"object":"field","mood":105,
+   332→"hiredAt":1793028072000}],"upgrades":["upg_worker_house"]}
+   333→=== BYTE-FOR-BYTE ===
+   334→W2 == W3: ИДЕНТИЧНЫ БАЙТ-В-БАЙТ
+   335→```
+   336→
+   337→**mood 105 roundtrip байт-в-байт** ✓ (контраст аудита: headless донор 105/105/95 → re-export 100/100/95).
+   338→
+   339→### 4.2 §5.2 dayPass-догон после import (перевёрнутый оракул Тихона)
+   340→
+   341→`payday force` на загруженном Доноре-А (Столовая накормлена egg из инвентаря, зарплаты уплачены
+   342→вовремя) — журнал `roll.log 12` (копипаста):
+   343→
+   344→```
+   345→range  workers:mood:wk_20261026_3 0..1 (uniform) → 0.69   (Тихон:  ≥0.5 → +10)
+   346→range  workers:mood:wk_20261026_1 0..1 (uniform) → 0.42   (Настасья: <0.5 → −10)
+   347→range  workers:mood:wk_20261026_0 0..1 (uniform) → 0.83   (Демид:  ≥0.5 → +10)
+   348→range  workers:sick:wk_20261026_{3,1,0} → 0.40 / 0.11 / 0.85  (все ≥ 0.02 — здоровы)
+   349→```
+   350→
+   351→Арифметика дня (копипаста):
+   352→
+   353→- **Настасья (105): 105 − 10 (ролл 0.42) + 3 (Столовая) + 2 (расчёт вовремя) = 100** —
+   354→  перевёрнутый оракул аудита: раньше 95 = факт клэмпа на load (100−10+3+2); теперь 100 = факт капа.
+   355→- Демид (95): 95 + 10 (0.83) + 3 + 2 = 110 → **клэмп капа 105** (витрина 105/105).
+   356→- Тихон (105): 105 + 10 (0.69) + 3 + 2 = 120 → **клэмп капа 105** (витрина 105/105).
+   357→
+   358→Витрина после: `Демид … 105/105 · Настасья … 100/105 · Тихон … 105/105` — ни один не срезан
+   359→клэмпом 100, кап Домика применяется во всех путях одинаково.
+   360→
+   361→### 4.3 §5.3 Бонус до 105
+   362→
+   363→```
+   364→❯mood set 2 96
+   365→настроение работника №2: 96/105
+   366→❯workers bonus 2
+   367→премия выдана: −60з (×1.5 дневной ЗП, транзакция worker.bonus) · настроение 105/105 (+10)
+   368→❯workers bonus 2
+   369→премия Тихон недавно выдавалась — кулдаун 7д 0ч (раз в 7 дней)
+   370→```
+   371→
+   372→Витрина: `[2] Тихон · … · настроение 105/105 · премия через 7д 0ч` — mood 96 + 10 = **105, не 100**
+   373→(раньше withMood без капа обрезал премию на 100); знаменатель ответа «/105» — из витрины;
+   374→повтор-кулдаун жив.
+   375→
+   376→### 4.4 §5.4 moodSet-валидация
+   377→
+   378→При живом Домике (Донор-А):
+   379→
+   380→```
+   381→❯mood set 2 103
+   382→настроение работника №2: 103/105          ← ПРИНЯТО (раньше валидация ≤100 отказывала)
+   383→❯mood set 2 106
+   384→настроение: целое 0..105                  ← отказ (динамический диапазон = капу)
+   385→```
+   386→
+   387→После перехода на чистый донор без upgrades (Донор-В, см. 4.5):
+   388→
+   389→```
+   390→❯mood set 0 101
+   391→настроение: целое 0..100                  ← отказ «макс 100» — оракул отрицания капа
+   392→```
+   393→
+   394→### 4.5 §5.5 Оракул отрицания клэмпа
+   395→
+   396→Донор-В (БЕЗ Домика, mood 100 + 104, upgrades пусто) → `save import` → витрина:
+   397→
+   398→```
+   399→  [0] Основа · Фермер · ★★★☆☆ · 30з/день · 4ч · Ферма «Поле» · настроение 100/100 · премия доступна
+   400→  [1] Кламп · Рыбовод · ★★☆☆☆ · 18з/день · 4ч · Озеро №1 · настроение 100/100 · премия доступна
+   401→```
+   402→
+   403→Mood 100 сохранён (граница 0..100 без Домика); 104 **срезано клэмпом до 100** — базовый клэмп жив,
+   404→знаменатель витрины «/100» (кап из данных = 100 без владения Домиком).
+   405→
+   406→## 5. Регресс-минимум §8 SESSION-M11.2 (копипасты, состояние после Донора-В)
+   407→
+   408→- `price iron_pickaxe` → «basePrice: 120 × редкость 1.5 = base 180 · ПОКУПКА: **180** золота ·
+   409→  ПРОДАЖА: **72** золота (ставка 40%)» ✓ · `price egg` → **3/1** ✓ · `price wool` → **15/6** ✓ ·
+   410→  `price worm_bait` → **2/1** ✓
+   411→- `shop.stock` → «Завоз 2026-10-27 · 18 позиций · магазин ур. 1 … **пул: 60 позиций · закрытые
+   412→  полки: baits, potions, building, rarities**» ✓
+   413→- `craft.list` → «Рецепты крафта · **33**» ✓ · `craft.stations` → «Рабочий верстак — построена ·
+   414→  очередь 2; Большой верстак 350 зол…» ✓
+   415→- `forge stats` → честный «укажите предмет: forge stats iron_sword#1» ✓ (причина жива)
+   416→- `tasks` → «Реестр задач (**15**)» ✓
+   417→- `fish.state` → «Рыбалка · локация: пруд · забросов 0 · поймано 0» ✓ · `pen.state` → «Загон ·
+   418→  слоты 0/4 · животных 0» ✓ · `lake.state` → «Озеро №1 · слоты 0/6 · вода: 15° · чистота 100/100
+   419→  (дрейф −5/день)» ✓ (дрейф жив)
+   420→- **«Грибник»-база** (живой сетап в свежей игре: `xp add 1500` → «+1500 XP → уровень 8 (ПОДНЯТ
+   421→  ×7!)» → `farm.upgrade tab_mushroom` → «куплено: Грибница (tab_mushroom) — транзакция
+   422→  farm.upgrade» → `farm.plow 0 mushroom` → `give seed_mushroom 2` → `farm.plant mushroom 0
+   423→  mushroom` → «посажено: mushroom в тайл 0 · созреет к 02:33:56» → `time +4h` + `time +8h` →
+   424→  `farm.water 0 mushroom` → «тайл 0 полит»):
+   425→  `farm.harvest 0 mushroom` → «**собрано: Грибы ×4 (качество D, 42)**» → `counters
+   426→  farm.mushroom.harvests` → «**farm.mushroom.harvests 1**» ✓
+   427→- `save info` → «версия формата: **14** … срезы: **18**» ✓ (без bump)
+   428→- `inv list` → «Инвентарь — слоты 2/20 (свободно 18)» ✓ · `resolve player.inventory.slots` →
+   429→  «= **20** (база: 20, ctx: уровень 8, модификаторы: нет)» ✓
+   430→- `counters sell` → «счётчиков нет» (продаж не было — честный ответ) ✓ · `stats show` → «Счётчики
+   431→  ядра (11)» (farm.mushroom.harvests 1 видна) ✓ · `flags list` → «Флаги (1) player.level5» ✓
+   432→- **390×844**: `scrollWidth 390 = clientWidth 390` — переполнения НЕТ ✓ · **pageerror 0** ✓ ·
+   433→  **hydration 0** (0 совпадений в консоли браузера) ✓ · **dev.log — 0 «Module not found»** ✓
+   434→
+   435→Цена фикса: ничего не сломано.
+   436→
+   437→## 6. Selftest ПОСЛЕ правок (§5.7)
+   438→
+   439→- Headless ×2 (итоговая перепроверка после всех живых проб): «ИТОГ: **697/697** проверок зелёные»,
+   440→  md5 (stdout+stderr combined) ×2 = **`f940eb60c691ff0a4971f7372692d862`** — **НЕ ИЗМЕНИЛСЯ** =
+   441→  канону (число чеков не росло; расширение тела чека 26 не тронуло вывод — имя чека сохранено).
+   442→- Браузерный: «ИТОГ: **697/697** проверок зелёные — ядро, модули и правки FIX в норме» ·
+   443→  «✓ M11 Работники: 26/26» · pageerror 0.
+   444→- Группы 44, Σ = 697 (разложение прежнее: 43 идентичны канону + «M08 Озеро» 36 + «M11 Работники» 26).
+   445→- tsc 0 по `src/` + lint 0 — явной строкой (§1 п.4, повторено финалом: 0 / 0).
+   446→
+   447→## 7. Финал сессии (§5.8)
+   448→
+   449→`save wipe` → «сейв стёрт — автосейв остановлен; F5 начнёт новую игру» → F5 → **честная новая
+   450→игра**: saveId **`c4463807-c328-4a5b-91e7-c018b6f0c658`**, «версия формата: 14», срезы **18**
+   451→(craft, farm, fishing, forge, inventory, kernel.buff, kernel.clock, kernel.pity, kernel.stash,
+   452→kernel.stats, kernel.wallet, lake, modforge, pen, player, quests, shop, workers), работники
+   453→**0/3** — post-wipe тишина («никого не нанято — доска: workers board»). Браузерный post-wipe
+   454→selftest: «ИТОГ: **697/697** …» + pageerror 0. **Git-статус**: дерево содержит ровно 6 заявленных
+   455→файлов правок (state.ts / upgrades.ts / hire.ts / dev.ts / commands-workers.ts /
+   456→workers-upg-checks.ts), незаявленных артефактов НЕТ. Временные инструменты сеанса — вне дерева:
+   457→`/tmp/fixm11-donor-b.json`, `/tmp/fixm11-donor-v.json`, `/tmp/fixm11-e2pretty.txt`,
+   458→`/tmp/fixm11-e3pretty.txt`, `/tmp/fixm11-w2.json`, `/tmp/fixm11-w3.json`, `/home/z/fixm11-parse.py`
+   459→(парсер браузерного экспорта, только чтение).
+   460→
+   461→## 8. Среда-примечания (серия FIX-M11-OBS; объём не расширяли)
+   462→
+   463→- **FIX-M11-OBS-1 (среда, класс аудита CDP×2)**: CDP-клин `Runtime.evaluate` ×2 после большой
+   464→  строки `save export` в консоли (таймауты 30–60с, затем полная закупорка канала) — восстановление
+   465→  перезапуском браузера; страницы и dev.log чисты (0 ошибок) — дефекта НЕТ.
+   466→- **FIX-M11-OBS-2 (среда, класс аудита IndexedDB×2)**: перезапуск браузера стартует НОВУЮ игру
+   467→  (профиль не персистентен; промежуточный saveId `867e7b04-cbe4…`) — восстановление импортом
+   468→  донора по образцу аудита; пробы, снятые до инцидента, валидны (их копипасты зафиксированы).
+   469→- **FIX-M11-OBS-3 (методика)**: ловушка первого снятия «экспорта» — regex-match зацепил строку
+   470→  вставленной команды `save import {…}` (компактный донор), а не движковый pretty-экспорт;
+   471→  обнаружено по формату, переснято двумя независимыми движковыми экспортами (W2/W3, `cmp` = 0).
+   472→- **FIX-M11-OBS-4 (среда, класс AUDIT-0 ANSI)**: терминальный рендер вывода bash съедает «[m»
+   473→  (дифф `hired: [mkWorker(...)` отображался как `kWorker(...)`); файлы проверены Read-инструментом —
+   474→  байты корректны, tsc 0 + selftest 697/697 подтверждают.
+   475→- **FIX-M11-OBS-5 (живой сетап)**: Грибник в свежей игре потребовал `xp add 1500` (Грибница =
+   476→  уровень 8) + вспашку + полив перед сбором («пора (ждёт полива/сбора)») — живые шаги прогрессии,
+   477→  не дефекты; счётчик базы тикнул (1).
+   478→- **Наблюдение детерминизма**: роллы §5.2 не повторяют роллы построения Донора-А (при load сид
+   479→  пересеивается на dailySeed(saveId, дата), и порядок потребления стримов между сеансами
+   480→  отличается) — арифметика дня во всех пробах верифицирована по журналу ФАКТИЧЕСКИХ роллов
+   481→  (`roll.log` копипастой), оракул 105−10+3+2 = 100 выполнен на Настасье.
+   482→
+   483→Находок сверх MISS-1 нет: 0 CRIT / 0 BLOCKER / 0 новых MISS / 0 QUESTION. Протокол несогласия
+   484→не активировался (решения спеки FX1–FX4 исполнены; заявленные следствия §2.2 — открыто в §2.2
+   485→настоящего отчёта, молчаливых отклонений нет).
+   486→
+   487→## 9. Вердикт
+   488→
+   489→**MISS-1 (P3) ЗАКРЫТ**: кап Домика 105 проведён в load-путь (`sanitize` клэмпит к moodCapOf из
+   490→данных входящего среза) и в три сопутствующие точки (премия bonus, moodSet-валидация и запись,
+   491→принты витрин) через ЕДИНУЮ точку `moodCapOf(state)` (числа — только в content/workers). Живые
+   492→подтверждения: load-путь 105/105/105 переживает F5 и import (контраст аудита 100/100/95),
+   493→dayPass-догон 105−10+3+2 = 100 (перевёрнутый оракул), бонус 96+10 → 105/105, moodSet 103
+   494→принято / 106 и 101-без-Домика отказаны, базовый клэмп 100 жив (104 → 100 без Домика).
+   495→Регресс §8 целый; selftest 697/697 ×2 md5 `f940eb60` НЕ изменился; kernel-дифф ПУСТ (пятая
+   496→заморозка); v14/18 без bump; миграций нет. **Гейт закрытия M11: после приёмки настоящего отчёта
+   497→M11 ЗАКРЫТ (2/2 + аудит + фикс) — открывается бриф SESSION-M12 «Шахта-рогалик» (порядок Task 38;
+   498→бриф учтёт: реестр исполнителей 15 жив, прецедент withWorkerEnergy для контракта энергий
+   499→исполнителей шахты, замки гейтов M12/M13 целы; carried: wc-жёлтые 305/308/301/342).**
+   500→
