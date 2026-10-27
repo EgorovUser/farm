@@ -16,10 +16,12 @@ import {
   walletOf,
   mineStateOf,
   lastRollOf,
+  fightOf,
   SHIELD_GEAR,
   scriptRoll,
   type MineFixture,
 } from './mine-fixture';
+import { runMineLootCapChecks } from './mine-lootcap-checks';
 
 type R<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -289,6 +291,10 @@ export async function runMineBossChecks(): Promise<CheckResult[]> {
     );
     f.dispose();
   }
+
+  // ------------------------------------------------ 31. [FIX-M12] граница вместимости
+  // (тело — mine-lootcap-checks.ts, распил по wc-гигиене, прецедент b4af909)
+  results.push(...(await runMineLootCapChecks()));
 
   return results;
 }

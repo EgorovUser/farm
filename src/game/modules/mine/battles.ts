@@ -19,7 +19,7 @@ import type { EventBus } from '@/kernel/bus/event-bus/event-bus';
 import type { SaveDirector } from '@/kernel/save/save-director';
 import { resolveFight, type FightGear } from './logic/fight';
 import { buildEnemies, buildBossEnemy } from './logic/enemies';
-import { rollOre, rollItem, createWearPickaxe, createRollOf, publishRounds } from './loot';
+import { rollOre, rollItem, createWearPickaxe, createRollOf, publishRounds, lootFits, grantMobLoot } from './loot';
 import { buildBossFightView, buildEnterView, buildFightView, type BossFightView, type EnterView, type FightView } from './view';
 import type { MineState } from './state';
 import type { MineModuleDeps } from './deps';
@@ -118,24 +118,25 @@ export function createBattles(x: BattleCtx): {
           },
         });
       }
-      const t = x.transaction.transact({
-        grants: [
-          { t: 'currency', id: 'gold', qty: goldTotal },
-          { t: 'item', defId: layerDef.value.ore.defId, qty: oreTotal },
-          ...items.map((i) => ({ t: 'item' as const, defId: i.defId, qty: i.qty })),
-        ],
-        eventId: 'mine.loot',
+      // [FIX-M12 · MISS-1 AUDIT-M12] моб-лут: проба вместимости + транзакция/
+      // нул-лут — хелпер grantMobLoot (loot.ts): проба по СУММЕ новых стеков
+      // (руда + шанс-предметы; до фикса моб-путь вовсе не пробировал → переполнение)
+      const lootGrants: Array<{ defId: string; qty: number }> = [
+        { defId: layerDef.value.ore.defId, qty: oreTotal },
+        ...items.map((i) => ({ defId: i.defId, qty: i.qty })),
+      ];
+      loot = grantMobLoot({
+        deps: x.deps,
+        transaction: x.transaction,
+        grants: lootGrants,
+        gold: goldTotal,
         reason: `добыча: ${mob.name}${eliteDef !== null ? ` (${eliteDef.name})` : ''} (слой ${layer})`,
-      });
-      if (t.ok) {
-        const wear = wearPickaxe(); // −1 за победу с добычей (G4)
-        loot = {
-          gold: goldTotal,
+        wear: wearPickaxe, // −1 за победу с добычей (G4)
+        view: {
           ore: { defId: layerDef.value.ore.defId, qty: oreTotal },
           ...(items.length > 0 ? { item: items[0]! } : {}),
-          ...(wear !== null ? { wear } : {}),
-        };
-      }
+        },
+      });
     }
     if (outcome.result === 'loss') {
       stats.deaths += 1;
@@ -217,8 +218,11 @@ export function createBattles(x: BattleCtx): {
         },
       });
       // атомарность: проба → транзакция (золото+руда+трофей) → A+ тиром A (прецедент craft.collect)
-      const probe = x.deps.canAcquire(def.trophy, 1);
-      if (probe.ok && probe.value.fits) {
+      // [FIX-M12 · MISS-1 AUDIT-M12] проба вместимости — по СУММЕ новых стеков ВСЕХ
+      // предметных грантов (руда + трофей): пробы D23 по отдельности не видят
+      // взаимодействия (каждая «влезает» в один свободный слот), а порт D17
+      // размещает гранты с enforceCapacity: false → инвентарь 21/20 (lootFits, loot.ts)
+      if (lootFits(x.deps.canAcquire, [{ defId: def.ore.defId, qty: ore }, { defId: def.trophy, qty: 1 }])) {
         const t = x.transaction.transact({
           grants: [
             { t: 'currency', id: 'gold', qty: gold },
