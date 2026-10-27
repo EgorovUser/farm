@@ -220,11 +220,11 @@ export async function runMineRunPart2(): Promise<CheckResult[]> {
     f.dispose();
   }
 
-  // 16. улучшения ×4: покупки eventId mine.upgrade; Вагонёт +4 слота; Лифт гейт-ачивкой
+  // 16. улучшения ×4 + [M13.2] Барак/Отряд: покупки eventId mine.upgrade; Вагонёт +4 слота; Лифт гейт-ачивкой
   {
     const f = await makeSeededRunGame('m131-upg');
     equipPickaxe(f, 'D');
-    grantGold(f, 2000);
+    grantGold(f, 4000);
     const ids = MINE_UPGRADES.map((u) => u.id);
     const buys = ids.map((id) => f.mine['mine.upgrades.buy'](id) as R<ViewShape>);
     const again = f.mine['mine.upgrades.buy']('mine_cart') as R<ViewShape>;
@@ -238,12 +238,12 @@ export async function runMineRunPart2(): Promise<CheckResult[]> {
     f.mine['mine.boss'](1, 20260102);
     const liftEnter = viewOf(f.mine['mine.enter'](1) as R<ViewShape>);
     results.push(
-      check('улучшения ×4 (R6/R9): все покупаются за золото (eventId mine.upgrade, TransactionService); повторная покупка — честный отказ; Вагонёт: runBag 8 → 12 слотов (витрина); Лифт БЕЗ ачивки — честная строка-условие + старт с колонки 1, С ачивкой ach_mine_boss_1 — старт с колонки 4', () =>
-        buys.every((b) => b.ok) && !again.ok && again.error.includes('уже куплено') &&
+      check('улучшения ×4 + [M13.2 · R1/R7] Барак/Отряд (R6/R9; витрина расширена сеансом M13.2 — прецедент обновления чека к факту): все покупаются за золото (eventId mine.upgrade, TransactionService) — теперь ×6 дефов (Вагонёт/Освещение/Оборудование/Лифт + Барак + Отряд ×1); повторная покупка разового — честный отказ; Вагонёт: runBag 8 → 12 слотов; Лифт БЕЗ ачивки — строка-условие + колонка 1, С ачивкой ach_mine_boss_1 — колонка 4', () =>
+        buys.every((b) => b.ok) && buys.length === 6 && !again.ok && again.error.includes('уже куплено') &&
         list.includes('КУПЛЕНО') && runView.includes('0/12 слотов') &&
         liftEnter.includes('колонка 4/4') && liftEnter.includes('ЛИФТ'), {
-        expected: '×4 куплено; повтор отказ; 12 слотов; лифт колонка 4',
-        actual: `покупки ${buys.filter((b) => b.ok).length}/4; повтор ${again.ok ? 'ok (дефект)' : 'отказ'}; слоты ${runView.includes('0/12') ? '12' : '?'}; лифт ${liftEnter.includes('колонка 4/4') ? 'колонка 4' : 'колонка 1'}`,
+        expected: '×6 куплено; повтор отказ; 12 слотов; лифт колонка 4',
+        actual: `покупки ${buys.filter((b) => b.ok).length}/${ids.length}; повтор ${again.ok ? 'ok (дефект)' : 'отказ'}; слоты ${runView.includes('0/12') ? '12' : '?'}; лифт ${liftEnter.includes('колонка 4/4') ? 'колонка 4' : 'колонка 1'}`,
       }),
     );
     f.dispose();

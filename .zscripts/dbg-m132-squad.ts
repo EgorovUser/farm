@@ -1,0 +1,21 @@
+import { makeSeededRunGame, grantGold, type ViewShape } from '../src/selfchecks/mine-run-fixture';
+type R<T> = { ok: true; value: T } | { ok: false; error: string };
+
+const f = await makeSeededRunGame('m132-gold-0');
+grantGold(f, 3000);
+const b0 = f.mine['mine.upgrades.buy']('mine_barracks') as R<ViewShape>;
+console.log('барак:', b0.ok, b0.ok ? '' : b0.error);
+grantGold(f, 3000);
+const b1 = f.mine['mine.upgrades.buy']('mine_squad') as R<ViewShape>;
+console.log('отряд-1:', b1.ok, b1.ok ? JSON.stringify(b1.value.lines.slice(0, 2)) : b1.error);
+const v1 = (f.mine['mine.helpers']() as unknown as ViewShape).lines.join('\n');
+console.log('--- доска после отряд-1 ---');
+for (const l of (f.mine['mine.helpers']() as unknown as ViewShape).lines) console.log('   ', l);
+const h1 = f.mine['mine.helpers.hire'](1) as R<ViewShape>;
+const h2 = f.mine['mine.helpers.hire'](2) as R<ViewShape>;
+console.log('найм 1/2:', h1.ok, h2.ok, h1.ok ? '' : h1.error, h2.ok ? '' : h2.error);
+const b2 = f.mine['mine.upgrades.buy']('mine_squad') as R<ViewShape>;
+console.log('отряд-2:', b2.ok, b2.ok ? JSON.stringify(b2.value.lines.slice(0, 2)) : b2.error);
+const b3 = f.mine['mine.upgrades.buy']('mine_squad') as R<ViewShape>;
+console.log('отряд-3 (кап):', b3.ok, b3.ok ? '' : b3.error);
+f.dispose();

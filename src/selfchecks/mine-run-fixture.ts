@@ -32,6 +32,10 @@ const CAPTURED = [
   'wallet.transaction',
   'item.acquired',
   'achievement.unlocked',
+  // --- [M13.2] события помощников (каталог 02 §4, строки Task 70)
+  'helper.hired',
+  'helper.quit',
+  'helper.levelReputation',
 ] as const;
 
 export function makeRunGame(storage: MemoryStorage = new MemoryStorage()): RunFixture {
@@ -65,6 +69,91 @@ export async function makeSeededRunGame(saveId: string): Promise<RunFixture> {
       saveId,
       contentVersion: '0.1.0-phase0',
       modules: {},
+      lastSeen: RUN_T0,
+    }),
+  );
+  const f = makeRunGame(storage);
+  await f.game.init();
+  return f;
+}
+
+// ---------------------------------------------------------------- [M13.2] доноры
+
+/** карта моба для сеемого забега (payload не читается — mobId решает) */
+export function mobCard(id: string, mobId: string, elite: string | null = null) {
+  return { id, kind: 'mob', hidden: false, payload: null, mobId, elite };
+}
+
+/** простая карта для сеемого забега */
+export function plainCard(id: string, kind: string, payload: unknown = null) {
+  return { id, kind, hidden: false, payload };
+}
+
+/** забег-донор для чеков M13.2: срез mine с активным забегом + наёмниками
+ *  (прецедент v14-донор FIX-M12; карта-босс — индекс 12, payload = bossId) */
+export function seededMineSlice(args: {
+  helpers: Array<{ instanceId: string; defId: string; hp: number; reputation: number }>;
+  runHelpers: string[];
+  layer: number;
+  status?: string | null;
+  cards: unknown[];
+  column?: number;
+  contrib?: Record<string, number>;
+  mobGold?: number;
+  upgrades?: Record<string, boolean | number>;
+}): Record<string, unknown> {
+  const cards = [...args.cards];
+  while (cards.length < 12) cards.push(plainCard(`card_filler_${cards.length}`, 'empty', { xp: 5 }));
+  cards.push(plainCard('card_boss', 'boss', 'spider_queen'));
+  return {
+    v: 1,
+    stats: { fights: 0, kills: 0, bossKills: 0, deaths: 0 },
+    ...(args.upgrades !== undefined ? { upgrades: args.upgrades } : {}),
+    helpers: args.helpers.map((h) => ({
+      instanceId: h.instanceId,
+      defId: h.defId,
+      hp: h.hp,
+      reputation: h.reputation,
+      hiredDay: '2024-01-01',
+    })),
+    run: {
+      runId: `seed-L${args.layer}-R1`,
+      layer: args.layer,
+      column: args.column ?? 1,
+      cards,
+      runBag: [],
+      torches: 0,
+      hp: 50,
+      helpers: args.runHelpers.map((id) => ({ instanceId: id, status: [] })),
+      runNumber: 1,
+      seed: 12345,
+      status: args.status ?? null,
+      firstOfDay: true,
+      campfire: false,
+      cardsResolved: 0,
+      altarMods: [],
+      pendingCollapse: false,
+      traderOpen: false,
+      contrib: args.contrib ?? {},
+      mobGold: args.mobGold ?? 0,
+      turns: {},
+      notes: [],
+    },
+    lastRunDay: '2024-01-01',
+  };
+}
+
+/** игра с сеемым срезом mine (донор забега/наёмников — канон load-пути) */
+export async function makeSeededSliceGame(saveId: string, mineSlice: unknown): Promise<RunFixture> {
+  const storage = new MemoryStorage();
+  await storage.set(
+    'main',
+    JSON.stringify({
+      saveVersion: 15,
+      savedAt: RUN_T0,
+      saveId,
+      contentVersion: '0.1.0-phase0',
+      modules: { mine: mineSlice },
       lastSeen: RUN_T0,
     }),
   );

@@ -75,6 +75,17 @@ export const PLAYER_BASES_TABLE: BasesTable = {
     //     (content/balance/bases.ts «удачи подсистем RngBus») — НЕ дублируется (П2)
     'mine.hiddenChance': 40, // базовая доля скрытых карт, %
     'mine.oreYield': 0, // доход руды, % (насыщенность/ривены кирок)
+    // --- [M13.2] домен помощников (брифы R3/R4/R5; санкция как M13.1 —
+    //     ровно mine.*-строки): боевые параметры наёмников — дельты над
+    //     дефом класса (трейты — flat, пред-база 0 — канон FIX-RIVEN);
+    //     эффективность — база 100 («Мерзляк» more −50 → 50, трейты inc);
+    //     бонус золота с мобов — лутер/«Жадный» (flat, сумма). Разрешаются
+    //     с тегом helper:<instanceId> (per-instance conditions — R10)
+    'mine.helper.atk': 0, // + к атаке помощника (трейты)
+    'mine.helper.hp': 0, // + к HP помощника (трейты)
+    'mine.helper.speed': 0, // + к скорости помощника (трейты)
+    'mine.helper.efficiency': 100, // эффективность, % (страхи/трейты)
+    'mine.helper.gold': 0, // +% золота с мобов (лутер/«Жадный»)
   },
   meta: {
     'player.energy.max': { min: 0 },
@@ -113,6 +124,13 @@ export const PLAYER_BASES_TABLE: BasesTable = {
     // доход может уходить в минус дебафами — без min
     'mine.hiddenChance': { min: 0 },
     'mine.oreYield': {},
+    // [M13.2] домен помощников: дельты двуполярны (трейты «Хилый» — минус);
+    // эффективность неотрицательна; бонус золота — только положительный
+    'mine.helper.atk': {},
+    'mine.helper.hp': {},
+    'mine.helper.speed': {},
+    'mine.helper.efficiency': { min: 0 },
+    'mine.helper.gold': {},
   },
 };
 

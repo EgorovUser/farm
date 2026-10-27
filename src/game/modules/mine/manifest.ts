@@ -2,20 +2,20 @@
  * Манифест M13 (01-CORE §9): единственное место точек интеграции.
  *
  * [M12.2 · G6] bump 1.0.0 → 1.1.0 (прецедент F16 M11.2). [M13.1 · R7] ОДИН
- * bump 1.1.0 → 1.2.0: publicApi += ровно ×7 (mine.run, mine.pick, mine.gen,
- * mine.reveal, mine.torch, mine.upgrades, mine.upgrades.buy — итог ×13);
- * eventsPublished += ровно ×3 (mine.runStarted, mine.runEnded,
- * mine.cardResolved — каталог 02 §4, строки Task 70; итог ×6);
- * eventsSubscribed += player.hpChanged (идемпотентный death-обработчик R4 —
- * смерть завершает забег: cozy HP := 1, deaths+1, −20%/−5% runBag);
- * modifierProviders += runBuffProvider (итог ×1 — единый провайдер модуля:
- * алтари/статусы/насыщенность/Освещение); taskExecutors [] (реестр 15 ЦЕЛ —
- * работники шахте НЕ служат, карточка M11 §8); statsCounters [] (счётчик
- * mine.runs — объявление фазы 0, событие mine.runEnded, НЕ переобъявляется).
+ * bump 1.1.0 → 1.2.0: publicApi += ровно ×7 (итог ×13); eventsPublished +=
+ * ровно ×3 (итог ×6); eventsSubscribed += player.hpChanged;
+ * modifierProviders += runBuffProvider (итог ×1); priceModifierProviders
+ * += mineTraderProvider [DECISION — вне перечисления R7, канон 04 §1].
  *
- * priceModifierProviders += mineTraderProvider [DECISION — заявлено открыто:
- * поле НЕ входило в перечисление R7; кротовая наценка по канону 04-DISCOUNTS
- * §1 (источник скидок/наценок объявляется шине цен; крот ≠ M04-полка)].
+ * [M13.2 · R10] ЗАКРЫВАЮЩИЙ bump сеанса модуля 1.2.0 → 1.3.0 (паттерн M12.2
+ * 1.0.0 → 1.1.0): publicApi += ровно ×3 (mine.helpers / mine.helpers.hire /
+ * mine.helpers.fire — итог ×16; имена — карточка §5 helpers board/hire +
+ * fire симметрично quit); eventsPublished += ровно ×3 (helper.hired /
+ * helper.quit / helper.levelReputation — каталог 02 §4, строки Task 70;
+ * итог ×9); eventsSubscribed БЕЗ изменений (player.hpChanged уже жив;
+ * перк медика — в цепи смерти обёрткой, НЕ новой подпиской); taskExecutors []
+ * (helpers ≠ работники M11 — «нанимаются на забеги, не на обслуживание»);
+ * statsCounters [] (mine.runs фазы 0 достаточно; данные helpers — срез).
  */
 import type { ModuleManifest } from '@/game/module-registry';
 
@@ -23,7 +23,7 @@ export function createMineManifest(): ModuleManifest {
   return {
     id: 'mine',
     title: 'M12 Шахта',
-    version: '1.2.0',
+    version: '1.3.0',
     stateKey: 'mine',
     publicApi: [
       'mine.state',
@@ -40,6 +40,10 @@ export function createMineManifest(): ModuleManifest {
       'mine.torch',
       'mine.upgrades',
       'mine.upgrades.buy',
+      // --- [M13.2 · R10] помощники: доска+состав / наём / увольнение
+      'mine.helpers',
+      'mine.helpers.hire',
+      'mine.helpers.fire',
     ],
     eventsPublished: [
       'mine.turnResolved',
@@ -49,6 +53,10 @@ export function createMineManifest(): ModuleManifest {
       'mine.runStarted',
       'mine.runEnded',
       'mine.cardResolved',
+      // --- [M13.2 · R10] каталог 02 §4, строки Task 70 (для сеанса M13.2)
+      'helper.hired',
+      'helper.quit',
+      'helper.levelReputation',
     ],
     eventsSubscribed: [{ event: 'player.hpChanged', handler: 'onHpChanged' }],
     modifierProviders: ['runBuffProvider'],

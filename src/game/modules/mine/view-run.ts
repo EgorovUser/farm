@@ -12,6 +12,7 @@ import { bagSlotsOf } from './bag';
 import { cardTitle } from './torch';
 import { potionsInBag } from './resolve';
 import { traderStockView } from './pick';
+import { helperLevelOf } from './helpers-hire';
 import type { MineRunState, RunCard } from './state';
 
 export interface RunView {
@@ -72,6 +73,21 @@ export function buildRunView(x: RunCtx): RunView {
       ? 'пусто'
       : run.runBag.map((e) => `${e.defId} ×${e.qty}${e.quality !== undefined ? ` (${e.quality.tier})` : ''}`).join(' + ');
   lines.push(`runBag: ${run.runBag.length}/${cap} слотов · ${bag} (выдача: лестница/босс 100% · смерть −${run.campfire ? 5 : 20}%`);
+  // [M13.2 · R2/R8] состав помощников забега поимённо: HP/статус/репутация-уровень
+  if (run.helpers.length === 0) {
+    lines.push('помощники: в забеге никого (наём — mine helpers; состав фиксируется на старте)');
+  } else {
+    const roster = run.helpers.map((rh) => {
+      const inst = (x.getState().helpers ?? []).find((h) => h.instanceId === rh.instanceId);
+      const p = inst !== undefined ? x.profileOf(inst.defId) : null;
+      if (inst === undefined || p === null) return `${rh.instanceId} (?)`;
+      const level = helperLevelOf(inst.reputation, x.helpersTable);
+      const revive = rh.status.includes('revive:used') ? ' · перк воскрешения ИСПОЛЬЗОВАН' : '';
+      return `${p.name} (${p.classId}) — HP ${inst.hp} · репутация ${inst.reputation} (ур. ${level})${revive}`;
+    });
+    lines.push(`помощники (${run.helpers.length}): ${roster.join(' · ')}`);
+    lines.push(`золото мобов забега: ${run.mobGold}з (база доли ${x.helpersTable.sharePoolPercent}% по вкладу · вклад игрока ${run.contrib['player'] ?? 0})`);
+  }
   // режимы
   if (run.pendingCollapse) lines.push('РЕЖИМ ОБВАЛА: mine pick <1..3> — какую карту следующей колонки засыпать');
   if (run.traderOpen) {

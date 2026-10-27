@@ -1,17 +1,17 @@
 /**
- * MineModule (M12.1 + M12.2 + M13.1) — каркас и монтаж (карточки M12/M13,
- * брифы SESSION-M12.1 F2–F8 / SESSION-M12.2 G1–G7 / SESSION-M13 R1–R10).
- * Изоляция (01 §5–§7): модуль НЕ импортирует чужие модули — все каналы
- * приходят колбэками app-слоя (deps.ts). Боевые сценарии — battles.ts,
+ * MineModule (M12.1 + M12.2 + M13.1 + M13.2) — каркас и монтаж (карточки
+ * M12/M13, брифы SESSION-M12.1 F2–F8 / SESSION-M12.2 G1–G7 / SESSION-M13
+ * R1–R10). Изоляция (01 §5–§7): модуль НЕ импортирует чужие модули — все
+ * каналы приходят колбэками app-слоя (deps.ts). Боевые сценарии — battles.ts,
  * забег — run/generator/resolve/fight-run/pick/torch/upgrades/view-run,
- * провайдеры — providers.ts (runBuff + кротовая наценка).
+ * помощники — helpers-board/hire/fight/battle/pay (M13.2), провайдеры —
+ * providers.ts (runBuff + кротовая наценка).
  *
- * [M13.1] вход mine.enter открывает ЗАБЕГ (R1): гейты M12.2 (двойной гейт
- * кирка+ачивка + энергия −20 РОВНО один раз — канон) → генерация слоя →
- * mine.runStarted. Смерть — подписка player.hpChanged (идемпотентно, R4).
- * Статы/гир боёв ЗАБЕГА резолвятся с тегами слоя/статуса (эффекты статусов
- * — conditions ctxTag, данные); песочница M12 — без тегей (канон стабильнее
- * golden-логов).
+ * [M13.2] доска наёмников: детерминизм dailySeed(saveId, dateISO) с кэшем
+ * в памяти (прецедент workers boardOf); профиль нанятого перепосчитывается
+ * из доски дня найма (defId hpr_<дата>_<i>); трейты — deps.rollTraits
+ * (живой ривен-конструктор M03 по реестру, П4). Вход mine.enter — гейты
+ * M12.2 + энергия + СТАРТ ЗАБЕГА (состав helpers — на старте, R2).
  */
 import type { GameModule, ModuleContext } from '@/game/module-registry';
 import type { EliteModDef, MineMobDef } from '@/content/mine/mobs';
@@ -21,18 +21,24 @@ import type { MineTable } from '@/content/mine/table';
 import type { MineCardDef, MineLayerStatusDef, MineRunEffectItem } from '@/content/mine/cards';
 import type { MineUpgradeDef } from '@/content/mine/upgrades';
 import type { ItemDef } from '@/content/items/items';
+import type { ModTypeDef } from '@/content/mods/registry';
+import type { HelperClassDef, HelperFearDef, HelperProfile, MineHelpersTable } from '@/content/mine/helpers';
+import type { BasesTable } from '@/content/balance/bases';
 import { createMineManifest } from './manifest';
 import { defaultMineState, mineSaveSlice, type MineState } from './state';
 import type { FightGear } from './logic/fight';
 import { createEvaluate, createLayerOf, createLayerGate } from './gates';
 import { createBattles } from './battles';
-import { buildMobView, buildStateView, buildEnterView, type MobView, type MineStateView, type EnterView } from './view';
-import { generateLayer, runSeedOf } from './generator';
-import { startRun, onHpChanged, type RunCtx } from './run';
+import { buildMobView, buildStateView, type MobView, type MineStateView } from './view';
+import { onHpChanged, type RunCtx } from './run';
+import { makeRunStatScope } from './run-parts';
 import { pickCard } from './pick';
 import { applyTorch } from './torch';
 import { upgradesView, buyUpgrade } from './upgrades';
-import { buildRunView, buildGenView, runStartLines, type RunView } from './view-run';
+import { buildRunView, type RunView } from './view-run';
+import { makeEnterRun, makeGenOracle, makeRevealAll } from './module-parts';
+import { makeHelpersMount } from './helpers-mount';
+import { helpersBoardView, hireHelper, fireHelper, type HelpersView } from './helpers-hire';
 import { makeRunBuffProvider, makeMineTraderProvider, RUN_BUFF_PROVIDER_ID, MINE_TRADER_PROVIDER_ID } from './providers';
 import type { Result } from '@/shared/types/result';
 import { err, ok } from '@/shared/types/result';
@@ -62,6 +68,15 @@ export class MineModule implements GameModule {
     const runEffects = content.get<MineRunEffectItem[]>('mine.cards.runEffects') ?? [];
     const upgradeDefs = content.get<MineUpgradeDef[]>('mine.upgrades') ?? [];
     const items = content.get<ItemDef[]>('items') ?? [];
+    // --- [M13.2] контент помощников + реестр ривен-типов (трейты доски);
+    //     реестр валидируется при старте — битый контент = отказ загрузки (П5)
+    const helperClasses = content.get<HelperClassDef[]>('mine.helpers');
+    const helpersTable = content.get<MineHelpersTable>('mine.helpers.table');
+    const helperFears = content.get<HelperFearDef[]>('mine.helpers.fears');
+    const modTypes = content.get<ModTypeDef[]>('mods');
+    const basesTable = content.get<BasesTable>('bases');
+    const baseOf = (stat: string): number =>
+      basesTable !== undefined && typeof basesTable.bases[stat] === 'number' ? basesTable.bases[stat]! : 0;
 
     save.registerSlice(
       'mine',
@@ -94,29 +109,9 @@ export class MineModule implements GameModule {
       };
     };
 
-    // статы/гир боёв ЗАБЕГА — с тегами слоя/статуса (эффекты статусов — ctxTag)
-    const runTags = (): string[] => {
-      const run = this.state.run;
-      return run === undefined
-        ? []
-        : ['mine', `layer:${run.layer}`, ...(run.status !== null ? [`status:${run.status}`] : [])];
-    };
-    const runStatCtx = () => ({ ...time.ctx('player'), tags: runTags() });
-    const runGearOf = (): FightGear => {
-      const c = runStatCtx();
-      const shield = this.deps.shieldView();
-      const sense = shield.hasShield
-        ? table.block.sensePerTier *
-          Math.max(0, (shield.tier !== null ? table.block.tierNumbers[shield.tier] : 1) - 1)
-        : 0;
-      return {
-        hasShield: shield.hasShield,
-        blockSensePct: sense,
-        fatedPct: statBus.resolve({ stat: 'combat.prophetic', ctx: c }),
-        critPct: statBus.resolve({ stat: 'mine.crit', ctx: c }),
-        damagePct: statBus.resolve({ stat: 'mine.damage', ctx: c }),
-      };
-    };
+    // статы/гир боёв ЗАБЕГА — с тегами слоя/статуса (эффекты статусов — ctxTag);
+    // [M13.2] скоуп перенесён в run-parts.ts (распил по wc-гигиене)
+    const { runStatCtx, runGearOf } = makeRunStatScope(this.deps, table, statBus, time, () => this.state);
 
     const battles = createBattles({
       deps: this.deps,
@@ -146,7 +141,27 @@ export class MineModule implements GameModule {
       save,
     });
 
-    // [M13.1] контекст забега: те же шины/сервисы + контент карт/улучшений
+    // [M13.2] монтаж доски наёмников — helpers-mount.ts (распил по wc)
+    const { boardOf, profileOf, helpersDeps } = makeHelpersMount({
+      deps: this.deps,
+      content,
+      statBus,
+      time,
+      save,
+      transaction: ctx.transaction,
+      bus,
+      upgradeDefs,
+      helperClasses,
+      helpersTable,
+      helperFears,
+      getState: () => this.state,
+      setState: (s) => {
+        this.state = s;
+      },
+      markDirty: () => save.markDirty(),
+    });
+
+    // контекст забега: те же шины/сервисы + контент карт/улучшений/помощников
     const runCtx: RunCtx = {
       deps: this.deps,
       table,
@@ -165,6 +180,10 @@ export class MineModule implements GameModule {
       stats: ctx.stats,
       time,
       evaluate,
+      helperClasses,
+      helpersTable,
+      helperFears,
+      profileOf,
       statOf: () => ({
         atk: statBus.resolve({ stat: 'combat.attack', ctx: runStatCtx() }),
         def: statBus.resolve({ stat: 'combat.defense', ctx: runStatCtx() }),
@@ -183,63 +202,39 @@ export class MineModule implements GameModule {
       save,
     };
 
-    // провайдеры (манифест): runBuff ×1 + кротовая наценка (priceModifierProviders)
-    statBus.registerProvider(makeRunBuffProvider(() => this.state, upgradeDefs, statuses));
+    // провайдеры (манифест): runBuff ×1 (алтари/статусы/насыщенность/Освещение
+    // + [M13.2] модификаторы профилей наёмников — conditions-канал) + кротовая
+    // наценка (priceModifierProviders)
+    statBus.registerProvider(
+      makeRunBuffProvider(
+        () => this.state,
+        upgradeDefs,
+        statuses,
+        modTypes,
+        helperClasses,
+        profileOf,
+        baseOf,
+      ),
+    );
     priceBus.registerProvider(makeMineTraderProvider(cards));
 
     // подписка смерти (манифест eventsSubscribed): идемпотентный death-обработчик
     bus.subscribe('player.hpChanged', (payload) => onHpChanged(runCtx, payload));
 
-    /** вход = гейты M12.2 + энергия + СТАРТ ЗАБЕГА (R1) */
-    const enterRun = (layerRaw: unknown): Result<EnterView> => {
-      const layerDef = layerOf(layerRaw);
-      if (!layerDef.ok) return err(layerDef.error);
-      const def = layerDef.value;
-      if (this.state.run !== undefined) {
-        return err('забег уже идёт — сначала завершите его (лестница/босс/свиток; mine run покажет состояние)');
-      }
-      const gate = layerGate(def);
-      if (!gate.ok) return err(gate.error);
-      const spent = this.deps.spendEnterEnergy(`спуск в шахту (слой ${def.layer})`);
-      if (!spent.ok) return err(spent.error);
-      const started = startRun(runCtx, def);
-      if (!started.ok) return err(started.error);
-      const base = buildEnterView(def, gate.value.pick, spent.value, layers.length);
-      return ok({ header: base.header, lines: [...base.lines, '', ...runStartLines(started.value.run, started.value.liftApplied, started.value.liftNote)] });
-    };
-
-    /** debug-оракул генерации: mine gen <layer> [--seed S] (сид вместо хеша) */
-    const genOracle = (layerRaw: unknown, seedRaw: unknown): Result<RunView> => {
-      const layerDef = layerOf(layerRaw);
-      if (!layerDef.ok) return err(layerDef.error);
-      const def = layerDef.value;
-      const seed = seedRaw !== undefined && Number.isFinite(Number(seedRaw))
-        ? Math.floor(Number(seedRaw))
-        : runSeedOf(this.deps.saveId(), def.layer, (ctx.stats.get('mine.runs') + 1));
-      const layout = generateLayer(
-        { cards, statuses, mobs, statBus, rngBus: ctx.rngBus, time },
-        def.layer,
-        seed,
-        def,
-        { ...time.ctx('player'), tags: ['mine', `layer:${def.layer}`] },
-      );
-      return ok(buildGenView(layout.cards, def, layout.seed, layout.status, layout.openInfo));
-    };
-
-    /** debug: mine reveal all — вскрыть все скрытые карты активного забега */
-    const revealAll = (): Result<RunView> => {
-      const run = this.state.run;
-      if (run === undefined) return err('забега нет — нечего вскрывать (debug-команда)');
-      let n = 0;
-      for (const c of run.cards) {
-        if (c.hidden && c.revealed !== true && c.destroyed !== true) {
-          c.revealed = true;
-          n += 1;
-        }
-      }
-      save.markDirty();
-      return ok({ header: 'debug: reveal all', lines: [`вскрыто скрытых карт: ${n} (факелы НЕ потрачены — debug)`] });
-    };
+    // [M13.2] замыкания api-точек — фабрики module-parts.ts (распил по wc)
+    const enterRun = makeEnterRun(runCtx, layerOf, layerGate, this.deps, () => this.state, layers.length);
+    const genOracle = makeGenOracle(
+      this.deps,
+      cards,
+      statuses,
+      mobs,
+      statBus,
+      ctx.rngBus,
+      time,
+      layerOf,
+      ctx.stats,
+    );
+    const revealAll = makeRevealAll(() => this.state, save);
 
     this.api = {
       // --- витрина статов среза (F8)
@@ -273,6 +268,10 @@ export class MineModule implements GameModule {
       'mine.upgrades': (): RunView => upgradesView(runCtx),
       'mine.upgrades.buy': (id: unknown): Result<RunView> =>
         buyUpgrade(runCtx, id === undefined ? '' : String(id)),
+      // --- [M13.2 · R10] ×3: доска+состав / наём / увольнение
+      'mine.helpers': (): HelpersView => helpersBoardView(helpersDeps),
+      'mine.helpers.hire': (i: unknown): Result<HelpersView> => hireHelper(helpersDeps, i),
+      'mine.helpers.fire': (i: unknown): Result<HelpersView> => fireHelper(helpersDeps, i),
     };
   }
 

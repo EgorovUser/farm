@@ -17,6 +17,7 @@ import type { ItemDef } from '@/content/items/items';
 import { CARDS_PER_COLUMN } from './generator';
 import { endRun, type RunCtx } from './run';
 import { resolveCard, potionsInBag, type CardResolution } from './resolve';
+import { fearLeaveRolls, scoutReveal } from './helpers-battle';
 import { runMobFight, runBossFight } from './fight-run';
 import type { MineRunState, RunCard } from './state';
 
@@ -103,6 +104,10 @@ function applyScroll(x: RunCtx, run: MineRunState): Result<CardResolution> {
   ];
   if (end.value.lostByCapacity.length > 0) {
     lines.push(`НЕ влезло (поимённо): ${end.value.lostByCapacity.map((l) => `${l.defId} ×${l.qty}`).join(', ')}`);
+  }
+  // [M13.2 · R5] зарплатная ведомость помощников — витрина runEnded
+  if (end.value.helperLines.length > 0) {
+    lines.push('— помощники (расчёт по забегу):', ...end.value.helperLines.map((l) => `  ${l}`));
   }
   return ok({ header: 'Свиток выхода', lines });
 }
@@ -210,6 +215,7 @@ export function pickCard(x: RunCtx, argRaw: string): Result<CardResolution> {
   }
   const layerDef = x.layers.find((l) => l.layer === run.layer);
   if (layerDef === undefined) return err(`слой ${run.layer} вне данных шахты`);
+  const resolvedColumn = run.column; // колонка разрешаемой карты (до сдвига)
   const r = resolveCard(x, run, card, layerDef);
   if (!r.ok) return err(r.error);
   if (x.getState().run !== undefined) {
@@ -217,7 +223,16 @@ export function pickCard(x: RunCtx, argRaw: string): Result<CardResolution> {
     run.cardsResolved += 1;
     if (run.column < 5) run.column += 1;
     if (card.kind === 'trader') run.traderOpen = true;
+    // [M13.2 · R3] страх-уход клаустрофоба: ролл при разрешении карт колонок 3–4
+    const fearLines = fearLeaveRolls(x, run, resolvedColumn);
+    // [M13.2 · R4] разведчик: вскрытие скрытой карты при входе в НОВУЮ колонку
+    const scoutLines = run.column !== resolvedColumn && x.getState().run !== undefined ? scoutReveal(x, run) : [];
+    // [M13.2 · R6] заметки забега (перк-воскрешение) — печатает разрешение
+    const notes = run.notes.splice(0, run.notes.length);
     x.markDirty();
+    if (fearLines.length + scoutLines.length + notes.length > 0) {
+      return ok({ header: r.value.header, lines: [...r.value.lines, ...fearLines, ...scoutLines, ...notes] });
+    }
   }
   return r;
 }

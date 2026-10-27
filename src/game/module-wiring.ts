@@ -661,6 +661,18 @@ export function wireGameModules(
       removeBuff: (id) => buffs.remove(id),
       // [M13.1] saveId — детерминизм сида генерации hash(saveId,layer,runNumber)
       saveId: () => save.getSaveId(),
+      // [M13.2] трейты доски наёмников — ЖИВЫМ ривен-конструктором M03 (П4:
+      // через реестр модулей; скоуп 'helper', бюджет по редкости — данные
+      // modforge.traitBudgets.helper; паттерн workers rollTraits F2)
+      rollTraits: (budget, shape, rng) => {
+        const r = modules.call('modforge', 'modforge.rollFor', {
+          budget,
+          scopeTags: ['helper'],
+          shape,
+          rng,
+        }) as { ok: true; value: { rolls: RolledModEntry[] } } | { ok: false; error: string } | null;
+        return r !== null && r.ok ? r.value.rolls : [];
+      },
       canAcquire: (defId, qty) =>
         (modules.call('inventory', 'inventory.canAcquire', defId, qty) ?? {
           ok: false as const,

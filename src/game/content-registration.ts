@@ -83,6 +83,10 @@ import { MINE_LAYERS } from '@/content/mine/layers';
 // + улучшения ×4 (бриф R2–R6; числа — только здесь)
 import { MINE_CARDS, MINE_TORCH, MINE_LAYER_STATUSES, MINE_RUN_EFFECTS } from '@/content/mine/cards';
 import { MINE_UPGRADES } from '@/content/mine/upgrades';
+// [M13.2] контент помощников: классы ×5 + страхи-Condition + таблица модуля
+// + трейт-типы ривена (скоуп 'helper'; слияние в 'mods' — ЖИВОЙ движок C6 M03
+// роллит их по бюджету редкости, П1/П5 — паттерн трейтов работников M11)
+import { HELPER_CLASSES, HELPER_FEAR_DEFS, MINE_HELPERS_TABLE, HELPER_TRAIT_TYPES } from '@/content/mine/helpers';
 import {
   eliteModsSchema,
   mineMobsSchema,
@@ -95,6 +99,11 @@ import {
   mineRunEffectsSchema,
   mineUpgradesSchema,
 } from '@/content/mine/schemas';
+import {
+  helperClassesSchema,
+  helperFearsSchema,
+  mineHelpersTableSchema,
+} from '@/content/mine/helpers-schemas';
 import { z } from 'zod';
 import { basesTableSchema, economySchema, itemsSchema, rngSchema, rollTablesSchema, timeSchema } from '@/kernel/content/schemas';
 
@@ -125,7 +134,7 @@ export function registerContent(content: ContentRegistry): void {
   //     content/workers/traits.ts, слияние ЗДЕСЬ: живой ривен-конструктор M03
   //     видит их через реестр БЕЗ правки своего кода — П1/П5; инвариант
   //     «stat → существующие базы» проверяет группа M03 по реестру 'mods')
-  content.register('mods', modTypesSchema, [...MOD_TYPES, ...WORKER_TRAIT_TYPES]);
+  content.register('mods', modTypesSchema, [...MOD_TYPES, ...WORKER_TRAIT_TYPES, ...HELPER_TRAIT_TYPES]);
   // --- контент M03: баланс модфорджа (бюджеты по редкости, рефанд, реролл)
   content.register('modforge', modforgeTableSchema, MODFORGE_TABLE);
   // --- контент M04 (карточка §2: «стартовый пул в content/shopPool.ts»)
@@ -204,4 +213,9 @@ export function registerContent(content: ContentRegistry): void {
   content.register('mine.cards.statuses', mineLayerStatusesSchema, MINE_LAYER_STATUSES);
   content.register('mine.cards.runEffects', mineRunEffectsSchema, MINE_RUN_EFFECTS);
   content.register('mine.upgrades', mineUpgradesSchema, MINE_UPGRADES);
+  // --- [M13.2] контент помощников (карточка M13 §4, брифы R1–R7; данные, П1;
+  //     инвариант M03 «stat → существующие базы» — mine.helper.*-строки в bases)
+  content.register('mine.helpers', helperClassesSchema, HELPER_CLASSES);
+  content.register('mine.helpers.fears', helperFearsSchema, HELPER_FEAR_DEFS);
+  content.register('mine.helpers.table', mineHelpersTableSchema, MINE_HELPERS_TABLE);
 }

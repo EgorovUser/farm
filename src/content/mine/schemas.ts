@@ -3,6 +3,7 @@
  * с путём поля). Инварианты карточки M12 §3–§4 + брифа SESSION-M12.1 F5.
  */
 import { z } from 'zod';
+import type { Condition } from '@/shared/types/requirement';
 
 const dirSchema = z.enum(['top', 'mid', 'bottom']);
 
@@ -338,8 +339,11 @@ export const mineRunEffectsSchema = z
   .min(1);
 
 // ============================================================ [M13.1] улучшения ×4
-// Бриф R6 (из ×6 карточки §3; Барак/Отряд — M13.2-замок): Вагонёт/Освещение/
-// Оборудование лагеря/Лифт; effect — ДАННЫЕ, код читает обобщённо (П5).
+// Бриф R6 (из ×6 карточки §3) + [M13.2 · R1/R7] Барак и Отряд (седьмое/
+// шестое места карточки §3): Вагонёт/Освещение/Оборудование лагеря/Лифт/
+// Барак наёмников/Отряд; effect — ДАННЫЕ, код читает обобщённо (П5).
+// [M13.2] Отряд — повторяемая покупка: repeatCosts (цены повторных покупок
+// данными, R7 «цены — данные»); покупок = 1 + repeatCosts.length.
 
 export const mineUpgradesSchema = z
   .array(
@@ -349,11 +353,16 @@ export const mineUpgradesSchema = z
         name: z.string().min(1),
         desc: z.string().min(1),
         costGold: z.number().int().min(1),
+        repeatCosts: z.array(z.number().int().min(1)).optional(),
         effect: z.union([
           z.object({ t: z.literal('bagSlots'), bagSlots: z.number().int().min(1) }).strict(),
           z.object({ t: z.literal('lighting'), hiddenChanceInc: z.number().int().max(0) }).strict(),
           z.object({ t: z.literal('campgear'), perCards: z.number().int().min(1), hp: z.number().int().min(1) }).strict(),
           z.object({ t: z.literal('lift'), startColumn: z.number().int().min(2).max(4) }).strict(),
+          // --- [M13.2 · R1] Барак открывает доску наёмников (слоты — R7)
+          z.object({ t: z.literal('barracks') }).strict(),
+          // --- [M13.2 · R7] Отряд: +N слота за покупку (старт 1, кап 3)
+          z.object({ t: z.literal('squad'), slotsPerPurchase: z.number().int().min(1) }).strict(),
         ]),
       })
       .strict(),
@@ -362,4 +371,17 @@ export const mineUpgradesSchema = z
   .refine((rows) => {
     const kinds = new Set(rows.map((r) => r.effect.t));
     return ['bagSlots', 'lighting', 'campgear', 'lift'].every((k) => kinds.has(k as 'bagSlots' | 'lighting' | 'campgear' | 'lift'));
-  }, { message: 'улучшения ×4: Вагонёт/Освещение/Оборудование/Лифт (R6)' });
+  }, { message: 'улучшения ×4: Вагонёт/Освещение/Оборудование/Лифт (R6)' })
+  .refine((rows) => rows.some((r) => r.effect.t === 'barracks'), {
+    message: 'улучшение «Барак наёмников» обязательно (M13.2 · R1)',
+  })
+  .refine((rows) => rows.some((r) => r.effect.t === 'squad'), {
+    message: 'улучшение «Отряд» обязательно (M13.2 · R7)',
+  })
+  .refine(
+    (rows) =>
+      rows
+        .filter((r) => r.effect.t === 'squad')
+        .every((r) => r.repeatCosts === undefined || r.repeatCosts.every((c) => c >= 1)),
+    { message: 'repeatCosts: цены повторных покупок ≥ 1' },
+  );

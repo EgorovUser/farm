@@ -136,6 +136,10 @@ function resolveExit(x: RunCtx, run: MineRunState): Result<CardResolution> {
   if (r.value.lostByCapacity.length > 0) {
     lines.push(`НЕ влезло в инвентарь (поимённо): ${r.value.lostByCapacity.map((l) => `${l.defId} ×${l.qty}`).join(', ')} — слоты основного рюкзака`);
   }
+  // [M13.2 · R5] зарплатная ведомость помощников — витрина runEnded
+  if (r.value.helperLines.length > 0) {
+    lines.push('— помощники (расчёт по забегу):', ...r.value.helperLines.map((l) => `  ${l}`));
+  }
   return ok({ header: 'Лестница вверх', lines });
 }
 

@@ -1,22 +1,24 @@
 /**
- * Провайдеры M13.1:
- *  - runBuffProvider (карточка §5, манифест modifierProviders ×1) — ЕДИНЫЙ
- *    провайдер модуля mine [DECISION]: бафы алтарей забега (duration runs —
- *    очищаются вместе с контейнером), эффекты статусов слоёв (conditions
- *    ctxTag status:<x> — действуют в резолвах с тегом: бои забега), «Насыщенность»
- *    (inc +10 на mine.oreYield первым забегом дня — модификатор дня по данным),
- *    Освещение (inc −25 на mine.hiddenChance — постоянный, режет долю скрытых
- *    40% → 30% на СЛЕДУЮЩЕЙ генерации, оракул R9);
- *  - mineTraderProvider (PriceBus, 04-DISCOUNTS §1) — кротовая наценка по
- *    данным на сток крота (ctx-тег mine:trader; поле манифеста
- *    priceModifierProviders — заявлено открыто: в перечислении R7 его не было).
+ * Провайдеры M13.1+M13.2:
+ *  - runBuffProvider (карточка §5, манифест modifierProviders ×1 — ЕДИНСТВЕННЫЙ
+ *    провайдер модуля) [M13.1]: бафы алтарей забега (duration runs), эффекты
+ *    статусов слоёв (conditions ctxTag status:<x>), «Насыщенность» (flat +10
+ *    на mine.oreYield первым забегом дня), Освещение (inc −25 на
+ *    mine.hiddenChance); [M13.2 · R10] здесь же — МОДИФИКАТОРЫ ПРОФИЛЕЙ
+ *    наёмников через conditions-канал (per-instance тег helper:<id>):
+ *    трейты (ривен-роллы доски — op flat на нулевых базах, канон FIX-RIVEN),
+ *    страх-эффективность («Мерзляк» more −(100−N) с условием страха), бонус
+ *    золота с мобов (лутер + «Жадный» flat на mine.helper.gold).
+ *  - mineTraderProvider (PriceBus, 04-DISCOUNTS §1) — кротовая наценка.
  */
 import type { Modifier, ModifierProvider, ResolveCtx } from '@/kernel/bus/stat-bus/modifier';
 import type { PriceMod, PriceModifierProvider } from '@/kernel/bus/price-bus/price-bus';
 import type { StatId, ID } from '@/shared/types/ids';
 import type { MineCardDef, MineLayerStatusDef } from '@/content/mine/cards';
-import type { MineUpgradeDef } from '@/content/mine/upgrades';
 import { MINE_SATURATION } from '@/content/mine/cards';
+import type { MineUpgradeDef } from '@/content/mine/upgrades';
+import type { ModTypeDef } from '@/content/mods/registry';
+import { helperTag, type HelperClassDef, type HelperProfile } from '@/content/mine/helpers';
 import type { MineState } from './state';
 
 export const RUN_BUFF_PROVIDER_ID = 'runBuff';
@@ -26,6 +28,10 @@ export function makeRunBuffProvider(
   getState: () => MineState,
   upgradeDefs: MineUpgradeDef[],
   statuses: MineLayerStatusDef[],
+  modTypes: readonly ModTypeDef[] = [],
+  helperClasses: readonly HelperClassDef[] = [],
+  profileOf: (defId: string) => HelperProfile | null = () => null,
+  baseOf: (stat: string) => number = () => 0,
 ): ModifierProvider {
   return {
     id: RUN_BUFF_PROVIDER_ID,
@@ -85,6 +91,69 @@ export function makeRunBuffProvider(
           op: 'inc',
           value: eff.hiddenChanceInc,
         });
+      }
+      // --- [M13.2 · R10] модификаторы профилей наёмников: per-instance тег
+      //     helper:<id> в conditions — трейты/страхи/класс-бонусы действуют
+      //     ТОЛЬКО в резолвах с тегом этого экземпляра (канал условий шины)
+      for (const inst of state.helpers ?? []) {
+        const profile = profileOf(inst.defId);
+        if (profile === null) continue;
+        const tag = helperTag(inst.instanceId);
+        // трейты: тип → деф реестра 'mods' → стат; op по пред-базе (FIX-RIVEN:
+        // inc на нулевой базе инертен — atk/hp/speed/gold базово 0 → flat)
+        for (const t of profile.traits) {
+          const def = modTypes.find((m) => m.id === t.type && m.scopeTags.includes('helper'));
+          if (def === undefined || def.stat !== stat) continue;
+          mods.push({
+            id: `mine.helper.trait.${t.type}.${inst.instanceId}`,
+            source: { kind: 'helper', refId: inst.defId },
+            stat: def.stat,
+            op: baseOf(def.stat) === 0 ? 'flat' : 'inc',
+            value: t.value,
+            conditions: [{ t: 'ctxTag', tag }],
+          });
+        }
+        // страх-эффективность: «Мерзляк» — more −(100−N) с условием страха
+        for (const f of profile.fears) {
+          if (f.effect.t !== 'efficiency') continue;
+          if (stat !== 'mine.helper.efficiency') continue;
+          const eff = f.effect as { t: 'efficiency'; percent: number };
+          mods.push({
+            id: `mine.helper.fear.${f.id}.${inst.instanceId}`,
+            source: { kind: 'helper', refId: inst.defId },
+            stat: 'mine.helper.efficiency',
+            op: 'more',
+            value: -(100 - eff.percent),
+            conditions: [f.condition, { t: 'ctxTag', tag }],
+          });
+        }
+        // класс-бонус золота с мобов (лутер) + «Жадный» (страха profile)
+        if (stat === 'mine.helper.gold') {
+          const cls = helperClasses.find((c) => c.classId === profile.classId);
+          if (cls !== undefined && cls.special.t === 'loot') {
+            const eff = cls.special as { t: 'loot'; goldBonusPercent: number };
+            mods.push({
+              id: `mine.helper.class.loot.${inst.instanceId}`,
+              source: { kind: 'helper', refId: profile.classId },
+              stat: 'mine.helper.gold',
+              op: 'flat',
+              value: eff.goldBonusPercent,
+              conditions: [{ t: 'ctxTag', tag }],
+            });
+          }
+          for (const f of profile.fears) {
+            if (f.effect.t !== 'profile') continue;
+            const eff = f.effect as { t: 'profile'; sharePct: number; goldPct: number };
+            mods.push({
+              id: `mine.helper.fear.${f.id}.gold.${inst.instanceId}`,
+              source: { kind: 'helper', refId: inst.defId },
+              stat: 'mine.helper.gold',
+              op: 'flat',
+              value: eff.goldPct,
+              conditions: [f.condition, { t: 'ctxTag', tag }],
+            });
+          }
+        }
       }
       return mods;
     },

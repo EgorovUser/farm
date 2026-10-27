@@ -1,0 +1,40 @@
+import { ManualClock } from '@/kernel/di/clock';
+import { MemoryStorage } from '@/kernel/save/storage-drivers';
+import { createGame } from '@/game/bootstrap';
+const T0 = new Date(2024, 0, 1, 12, 0, 0).getTime();
+type R<T> = { ok: true; value: T } | { ok: false; error: string };
+interface V { header: string; lines: string[] }
+const storage = new MemoryStorage();
+await storage.set('main', JSON.stringify({ saveVersion: 15, savedAt: T0, saveId: 'dbg3-upg', contentVersion: '0.1.0-phase0', modules: {}, lastSeen: T0 }));
+const game = createGame(new ManualClock(T0), storage);
+await game.init();
+const mine = game.modules.get('mine')!.api;
+const inv = game.modules.get('inventory')!.api;
+const player = game.modules.get('player')!.api;
+(inv as any)['inventory.add']('iron_pickaxe', 'D', 50, 1, 'dbg');
+const list = ((inv as any)['inventory.list'] as () => Array<{ iid: string; defId: string }>)();
+(inv as any)['inventory.equip'](list.findLast((i) => i.defId === 'iron_pickaxe')!.iid, 'pickaxe');
+game.transaction.transact({ grants: [{ t: 'currency', id: 'gold', qty: 2000 }], eventId: 'dbg' });
+for (const id of ['mine_cart', 'mine_lighting', 'mine_campgear', 'mine_lift']) {
+  console.log('buy', id, (mine['mine.upgrades.buy'](id) as R<V>).ok);
+}
+const again = mine['mine.upgrades.buy']('mine_cart') as R<V>;
+console.log('again:', again.ok, again.ok ? '' : again.error);
+const listV = mine['mine.upgrades']() as V;
+console.log('list has КУПЛЕНО:', listV.lines.some((l) => l.includes('КУПЛЕНО')));
+const e1 = mine['mine.enter'](1) as R<V>;
+console.log('enter1:', e1.ok);
+const rv = mine['mine.run']() as V;
+console.log('bag line:', rv.lines.find((l) => l.includes('runBag')));
+(player as any)['player.setHp'](0);
+(player as any)['player.setHp'](50);
+game.buffs.add({ id: 'd.a', source: { kind: 'buff', refId: 'd' }, stat: 'combat.attack', op: 'flat', value: 500 }, game.time.now());
+game.buffs.add({ id: 'd.d', source: { kind: 'buff', refId: 'd' }, stat: 'combat.defense', op: 'flat', value: 500 }, game.time.now());
+const boss = mine['mine.boss'](1, 777) as R<{ outcome: string }>;
+console.log('boss:', boss.ok ? boss.value.outcome.slice(0, 30) : boss.error);
+const e2 = mine['mine.enter'](1) as R<V>;
+console.log('enter2 ok:', e2.ok);
+if (e2.ok) e2.value.lines.forEach((l) => console.log('  | ' + l));
+console.log('has колонка 4/4:', e2.ok ? e2.value.lines.some((l) => l.includes('колонка 4/4')) : false);
+console.log('has ЛИФТ:', e2.ok ? e2.value.lines.some((l) => l.includes('ЛИФТ')) : false);
+game.dispose();

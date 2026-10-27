@@ -157,11 +157,11 @@ export async function runMineChecks(): Promise<CheckGroup> {
     const apiKeys = Object.keys(mounted?.api ?? {}).sort();
     const info = f.game.save.info();
     results.push(
-      check('манифест M12/M13 = факту (F2 + [M12.2 · G6] bump 1.0.0 → 1.1.0 + [M13.1 · R7] bump 1.1.0 → 1.2.0, прецеденты F16 M11.2/чека 26 FIX-M11): version 1.2.0; publicApi РОВНО ×13 = [mine.state, mine.mob, mine.fight, mine.elite, mine.enter, mine.boss + РОВНО ×7 забега: mine.run, mine.pick, mine.gen, mine.reveal, mine.torch, mine.upgrades, mine.upgrades.buy]; eventsPublished РОВНО ×6 = [mine.turnResolved, mine.enemyKilled, mine.bossKilled + mine.runStarted, mine.runEnded, mine.cardResolved — строки Task 70 каталога 02 §4]; eventsSubscribed РОВНО ×1 = [player.hpChanged] (идемпотентный death-обработчик R4); modifierProviders РОВНО ×1 = [runBuffProvider]; priceModifierProviders += mineTraderProvider [DECISION M13.1 — кротовая наценка, 04 §1]; taskExecutors [] (реестр задач 15 ЦЕЛ); statsCounters []; save info: v15, срезов 19 (+mine)', () =>
+      check('манифест M12/M13 = факту (F2 + [M12.2 · G6] 1.0.0 → 1.1.0 + [M13.1 · R7] 1.1.0 → 1.2.0 + [M13.2 · R10] ЗАКРЫВАЮЩИЙ 1.2.0 → 1.3.0, паттерн M12.2; прецеденты F16 M11.2/чека 26 FIX-M11): version 1.3.0; publicApi РОВНО ×16 = [mine.state, mine.mob, mine.fight, mine.elite, mine.enter, mine.boss + ×7 забега M13.1: mine.run, mine.pick, mine.gen, mine.reveal, mine.torch, mine.upgrades, mine.upgrades.buy + РОВНО ×3 помощников M13.2: mine.helpers, mine.helpers.hire, mine.helpers.fire]; eventsPublished РОВНО ×9 = [mine.turnResolved, mine.enemyKilled, mine.bossKilled + mine.runStarted, mine.runEnded, mine.cardResolved + helper.hired, helper.quit, helper.levelReputation — строки Task 70 каталога 02 §4]; eventsSubscribed РОВНО ×1 = [player.hpChanged] (идемпотентный death-обработчик R4; перк медика — обёрткой, НЕ подпиской); modifierProviders РОВНО ×1 = [runBuffProvider]; priceModifierProviders += mineTraderProvider [DECISION M13.1 — кротовая наценка, 04 §1]; taskExecutors [] (helpers ≠ работники M11); statsCounters []; save info: v15, срезов 19 (+mine)', () =>
         manifest !== undefined &&
-        manifest.version === '1.2.0' &&
-        JSON.stringify(apiKeys) === JSON.stringify(['mine.boss', 'mine.elite', 'mine.enter', 'mine.fight', 'mine.gen', 'mine.mob', 'mine.pick', 'mine.reveal', 'mine.run', 'mine.state', 'mine.torch', 'mine.upgrades', 'mine.upgrades.buy']) &&
-        JSON.stringify([...(manifest.eventsPublished ?? [])].sort()) === JSON.stringify(['mine.bossKilled', 'mine.cardResolved', 'mine.enemyKilled', 'mine.runEnded', 'mine.runStarted', 'mine.turnResolved']) &&
+        manifest.version === '1.3.0' &&
+        JSON.stringify(apiKeys) === JSON.stringify(['mine.boss', 'mine.elite', 'mine.enter', 'mine.fight', 'mine.gen', 'mine.helpers', 'mine.helpers.fire', 'mine.helpers.hire', 'mine.mob', 'mine.pick', 'mine.reveal', 'mine.run', 'mine.state', 'mine.torch', 'mine.upgrades', 'mine.upgrades.buy']) &&
+        JSON.stringify([...(manifest.eventsPublished ?? [])].sort()) === JSON.stringify(['helper.hired', 'helper.levelReputation', 'helper.quit', 'mine.bossKilled', 'mine.cardResolved', 'mine.enemyKilled', 'mine.runEnded', 'mine.runStarted', 'mine.turnResolved']) &&
         JSON.stringify(manifest.eventsSubscribed) === JSON.stringify([{ event: 'player.hpChanged', handler: 'onHpChanged' }]) &&
         JSON.stringify(manifest.modifierProviders) === JSON.stringify(['runBuffProvider']) &&
         JSON.stringify(manifest.priceModifierProviders) === JSON.stringify(['mineTraderProvider']) &&
@@ -169,7 +169,7 @@ export async function runMineChecks(): Promise<CheckGroup> {
         JSON.stringify(manifest.statsCounters) === JSON.stringify([]) &&
         info.saveVersion === 15 && info.slices.length === 19 && info.slices.includes('mine') &&
         f.game.tasks.list().length === 15, {
-        expected: '1.2.0; api ×13; события ×6; подписка hpChanged; runBuff + mineTrader; tasks 15; v15/19',
+        expected: '1.3.0; api ×16; события ×9; подписка hpChanged; runBuff + mineTrader; tasks 15; v15/19',
         actual: `${manifest?.version}; api ${apiKeys.length}; события ${(manifest?.eventsPublished ?? []).length}; подписки ${(manifest?.eventsSubscribed ?? []).length}; провайдеры ${(manifest?.modifierProviders ?? []).length}+${(manifest?.priceModifierProviders ?? []).length}; tasks ${f.game.tasks.list().length}; v${info.saveVersion}/${info.slices.length}`,
       }),
     );

@@ -10,10 +10,16 @@
  * addXp — «пустая пещера» (публичный API M01, П4); addBuff/listBuffs/
  * removeBuff — штатный Buff-канал ядра kernel.buff (BUF-1: зелья крота;
  * очистка runs-бафов при runEnded — API владельца, канон 02 §2).
+ *
+ * [M13.2] новый шов (заявлен поимённо): rollTraits — трейты кандидатов доски
+ * наёмников ЖИВЫМ ривен-конструктором M03 (app-слой → ModuleRegistry →
+ * modforge.rollFor, скоуп 'helper', бюджет по редкости — паттерн workers F2;
+ * изоляция rg ×3 не нарушена — импорта modforge из mine НЕТ).
  */
 import type { QualityTier } from '@/shared/types/ids';
 import type { Result } from '@/shared/types/result';
 import type { Modifier } from '@/kernel/bus/stat-bus/modifier';
+import type { RolledModEntry } from '@/shared/types/rolled-mod';
 
 /** витрина кирки (app-слой: M02 equipped + M10 заточка) */
 export interface PickaxeView {
@@ -56,6 +62,13 @@ export interface MineModuleDeps {
   removeBuff(id: string): boolean;
   /** [M13.1] saveId — детерминизм сида генерации (карточка §3) */
   saveId(): string;
+  /** [M13.2] трейты доски наёмников — живой ривен-конструктор M03 (П4:
+   *   через реестр; бюджет по редкости, форма [1,3]/50% — данные modforge) */
+  rollTraits(
+    budget: number,
+    shape: { positives: [number, number]; negChance: number },
+    rng: () => number,
+  ): RolledModEntry[];
   /** проба вместимости (канон D23) */
   canAcquire(defId: string, qty: number): Result<{ fits: boolean; free: number; newEntries: number }>;
   /** HP игрока — публичный API M01 (player.checkHp) */

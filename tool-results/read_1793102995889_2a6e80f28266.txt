@@ -1,0 +1,681 @@
+     1→/**
+     2→ * Монтаж игровых модулей (вынесено из bootstrap.ts по правилу 01-CORE §6:
+     3→ * файл превысил 300 строк при касании M04.1 — сборка ядра и монтаж модулей
+     4→ * разные ответственности).
+     5→ *
+     6→ * Здесь — ЕДИНСТВЕННОЕ место, где модули знают друг о друге: колбэки
+     7→ * app-слоя вайрятся через ModuleRegistry (П4: прямые импорты запрещены;
+     8→ * прецеденты D33 applyUseEffect, D38 getSubject/applyRolls).
+     9→ *
+    10→ * [M04.1 · C4] каналы магазина: deliverItem → inventory.acquire (D23),
+    11→ * probeCapacity → inventory.canAcquire (проба до оплаты), rollItem →
+    12→ * modforge.rollItem (именованный стрим shop:issue:N), applyRolls →
+    13→ * inventory.setRolls; saveId — детерминизм ротации (карточка §2).
+    14→ */
+    15→import type { GameDirector } from './game-director';
+    16→import type { ModuleRegistry } from './module-registry';
+    17→import type { ContentRegistry } from '@/kernel/content/content-registry';
+    18→import type { SaveDirector } from '@/kernel/save/save-director';
+    19→import type { WalletService } from '@/kernel/services/wallet/wallet-service';
+    20→import { PlayerModule } from './modules/player/module';
+    21→import { InventoryModule } from './modules/inventory/module';
+    22→import { ModForgeModule } from './modules/modforge/module';
+    23→import { ShopModule } from './modules/shop/module';
+    24→import { CraftModule } from './modules/craft/module';
+    25→import { ForgeModule } from './modules/forge/module';
+    26→import { FarmModule } from './modules/farm/module';
+    27→import { PenModule } from './modules/pen/module';
+    28→import { FishingModule } from './modules/fishing/module';
+    29→import { LakeModule } from './modules/lake/module';
+    30→import { WorkersModule } from './modules/workers/module';
+    31→import { MineModule } from './modules/mine/module';
+    32→import { QuestsModule } from './modules/quests/module';
+    33→import type { DeliverReceipt } from './modules/shop/purchase';
+    34→import type { PlayerTable } from '@/content/player/progression';
+    35→import type { SkillDef } from '@/content/player/skills';
+    36→import type { CounterDef } from '@/content/player/counters';
+    37→import type { RolledModEntry } from '@/shared/types/rolled-mod';
+    38→import type { AcquireReceipt } from './modules/inventory/store';
+    39→import type { Result } from '@/shared/types/result';
+    40→import type { CurrencyId, ID, QualityTier, StatId } from '@/shared/types/ids';
+    41→import type { StationViewRow } from './modules/craft/stations';
+    42→import { effectiveQualityOf } from './modules/forge/outcome';
+    43→import type { ForgeTable } from '@/content/balance/forging';
+    44→
+    45→export function wireGameModules(
+    46→  director: GameDirector,
+    47→  modules: ModuleRegistry,
+    48→  content: ContentRegistry,
+    49→  save: SaveDirector,
+    50→  wallet: WalletService,
+    51→): void {
+    52→  // --- M01 «Игрок»: активируется ДО init/load — срез и подписки должны
+    53→  //     стоять до save.load() (иначе реген пропустит оффлайн-досчёт)
+    54→  modules.register(
+    55→    new PlayerModule(
+    56→      content.get<PlayerTable>('player.progression'),
+    57→      content.get<SkillDef[]>('player.skills'),
+    58→      content.get<CounterDef[]>('player.counters'),
+    59→    ),
+    60→  );
+    61→  director.activate('player');
+    62→
+    63→  // --- M02 «Инвентарь»: подмена ItemPort (D17) в activate; гейт-контекст и
+    64→  //     канал эффектов useAction — через публичный API игрока (П4);
+    65→  //     [M10.1 · шов §4.5] statScaleOf/effectiveTierOf — заточка в статах/цене
+    66→  //     (forge через ModuleRegistry; до активации forge — дефолты 1/identity)
+    67→  modules.register(
+    68→    new InventoryModule({
+    69→      gateExtras: () =>
+    70→        (modules.call('player', 'player.ctxExtras') ?? {}) as Record<string, unknown>,
+    71→      applyUseEffect: (t, value, reason) => {
+    72→        if (t === 'grantEnergy') modules.call('player', 'player.grantEnergy', value, reason);
+    73→        else modules.call('player', 'player.grantHp', value, reason);
+    74→      },
+    75→      statScaleOf: (iid) =>
+    76→        (modules.call('forge', 'forge.statScale', iid) as number | undefined) ?? 1,
+    77→      effectiveTierOf: (iid, tier) =>
+    78→        (modules.call('forge', 'forge.effectiveTier', iid, tier) as QualityTier | undefined) ?? tier,
+    79→    }),
+    80→  );
+    81→  director.activate('inventory');
+    82→
+    83→  // --- M03 «Модфордж»: доступ к предмету реролл-цикла — колбэки app-слоя
+    84→  //     (прецедент D33); [M04.1 · C6] saveId — стабильный сид реролла
+    85→  modules.register(
+    86→    new ModForgeModule({
+    87→      getSubject: (iid) => {
+    88→        const items = (modules.call('inventory', 'inventory.list') ?? []) as Array<{
+    89→          iid: string;
+    90→          defId: string;
+    91→          rolledMods: RolledModEntry[];
+    92→        }>;
+    93→        const it = items.find((e) => e.iid === iid);
+    94→        return it ? { defId: it.defId, rolls: it.rolledMods } : null;
+    95→      },
+    96→      applyRolls: (iid, rolls) =>
+    97→        (modules.call('inventory', 'inventory.setRolls', iid, rolls) ?? {
+    98→          ok: false as const,
+    99→          error: 'модуль инвентаря недоступен',
+   100→        }) as Result<unknown>,
+   101→      saveId: () => save.getSaveId(),
+   102→    }),
+   103→  );
+   104→  director.activate('modforge');
+   105→
+   106→  // --- M04 «Магазин» (фаза 2): выдача/роллы/гейты — колбэки app-слоя (П4);
+   107→  //     itemCount — по рюкзаку (inventory.list; equipped-записи гейтами
+   108→  //     покупки не учитываются — владение уже состоявшейся выдачей)
+   109→  //     [M15.2 · N10] gateExtras: гейты ассортимента читают флаги/ачивки M15
+   110→  //     (unlock на строке пула/ItemDef → Requirement-оценщик → hasFlag/
+   111→  //     hasAchievement из extras) — шов app-слоя, логика M04 не тронута
+   112→  modules.register(
+   113→    new ShopModule({
+   114→      deliverItem: (defId, qty, source) =>
+   115→        (modules.call('inventory', 'inventory.acquire', defId, qty, source) ?? {
+   116→          ok: false as const,
+   117→          error: 'модуль инвентаря недоступен',
+   118→        }) as Result<DeliverReceipt>,
+   119→      probeCapacity: (defId, qty) =>
+   120→        (modules.call('inventory', 'inventory.canAcquire', defId, qty) ?? {
+   121→          ok: false as const,
+   122→          error: 'модуль инвентаря недоступен',
+   123→        }) as Result<{ fits: boolean; free: number; newEntries: number }>,
+   124→      rollItem: (defId, streamKey) =>
+   125→        (modules.call('modforge', 'modforge.rollItem', defId, streamKey) ?? {
+   126→          ok: false as const,
+   127→          error: 'модуль модфорджа недоступен',
+   128→        }) as Result<{ rolls: RolledModEntry[] }>,
+   129→      applyRolls: (iid, rolls) =>
+   130→        (modules.call('inventory', 'inventory.setRolls', iid, rolls) ?? {
+   131→          ok: false as const,
+   132→          error: 'модуль инвентаря недоступен',
+   133→        }) as Result<unknown>,
+   134→      gateExtras: () =>
+   135→        ({
+   136→          ...(modules.call('player', 'player.ctxExtras') ?? {}),
+   137→          ...(modules.call('quests', 'quests.gateExtras') ?? {}),
+   138→        }) as Record<string, unknown>,
+   139→      itemCount: (defId) => {
+   140→        const items = (modules.call('inventory', 'inventory.list') ?? []) as Array<{
+   141→          defId: string;
+   142→          qty: number;
+   143→        }>;
+   144→        return items.filter((i) => i.defId === defId).reduce((s, i) => s + i.qty, 0);
+   145→      },
+   146→      saveId: () => save.getSaveId(),
+   147→    }),
+   148→  );
+   149→  director.activate('shop');
+   150→
+   151→  // --- M09 «Крафт» (фаза 2): выдача/роллы/энергия/гейты/ремонт — колбэки
+   152→  //     app-слоя (П4, прецеденты D33/D38/C4); walletGet — чтение для плана
+   153→  //     входов (списание — только TransactionService)
+   154→  modules.register(
+   155→    new CraftModule({
+   156→      listItems: () =>
+   157→        (modules.call('inventory', 'inventory.list') ?? []) as Array<{
+   158→          iid: ID;
+   159→          defId: ID;
+   160→          qty: number;
+   161→          quality: { tier: QualityTier; value: number };
+   162→          durability?: { current: number; max: number };
+   163→        }>,
+   164→      walletGet: (id) => wallet.get(id as CurrencyId),
+   165→      deliverOutput: (defId, tier, value, qty, source) =>
+   166→        (modules.call('inventory', 'inventory.add', defId, tier, value, qty, source) ?? {
+   167→          ok: false as const,
+   168→          error: 'модуль инвентаря недоступен',
+   169→        }) as Result<AcquireReceipt>,
+   170→      probeCapacity: (defId, qty) =>
+   171→        (modules.call('inventory', 'inventory.canAcquire', defId, qty) ?? {
+   172→          ok: false as const,
+   173→          error: 'модуль инвентаря недоступен',
+   174→        }) as Result<{ fits: boolean; free: number; newEntries: number }>,
+   175→      rollItem: (defId, streamKey) =>
+   176→        (modules.call('modforge', 'modforge.rollItem', defId, streamKey) ?? {
+   177→          ok: false as const,
+   178→          error: 'модуль модфорджа недоступен',
+   179→        }) as Result<{ rolls: RolledModEntry[] }>,
+   180→      applyRolls: (iid, rolls) =>
+   181→        (modules.call('inventory', 'inventory.setRolls', iid, rolls) ?? {
+   182→          ok: false as const,
+   183→          error: 'модуль инвентаря недоступен',
+   184→        }) as Result<unknown>,
+   185→      gateExtras: () =>
+   186→        (modules.call('player', 'player.ctxExtras') ?? {}) as Record<string, unknown>,
+   187→      withEnergy: (stat: StatId, action: () => Result<unknown>, reason?: string) =>
+   188→        (modules.call('player', 'player.withEnergy', stat, action, reason) ?? {
+   189→          ok: false as const,
+   190→          error: 'модуль игрока недоступен',
+   191→        }) as Result<unknown>,
+   192→      setDurability: (iid, current) =>
+   193→        (modules.call('inventory', 'inventory.dur', iid, current) ?? {
+   194→          ok: false as const,
+   195→          error: 'модуль инвентаря недоступен',
+   196→        }) as Result<{ iid: ID; current: number; max: number }>,
+   197→    }),
+   198→  );
+   199→  director.activate('craft');
+   200→
+   201→  // --- M10 «Заточка» (фаза 2): рюкзак/витрина станций/гейты — колбэки
+   202→  //     app-слоя (П4, прецедент D38/C4); наковальня — через api craft.stations
+   203→  //     («вкладка ЗАТОЧКИ у наковальни» карточки M09 §2 — вызов, не импорт);
+   204→  //     [M10.2 · §5] карточные каналы: modforge.rollFor (бюджет 4×L, теги
+   205→  //     card:forge, target R4) + inventory.setRolls (append выбранной карточки)
+   206→  modules.register(
+   207→    new ForgeModule({
+   208→      listItems: () =>
+   209→        (modules.call('inventory', 'inventory.list') ?? []) as Array<{
+   210→          iid: ID;
+   211→          defId: ID;
+   212→          quality: { tier: QualityTier; value: number };
+   213→          rolledMods?: RolledModEntry[];
+   214→        }>,
+   215→      craftStationBuilt: (id) =>
+   216→        ((modules.call('craft', 'craft.stations') ?? []) as StationViewRow[]).some(
+   217→          (s) => s.id === id && s.built,
+   218→        ),
+   219→      gateExtras: () =>
+   220→        (modules.call('player', 'player.ctxExtras') ?? {}) as Record<string, unknown>,
+   221→      rollFor: (req) =>
+   222→        (modules.call('modforge', 'modforge.rollFor', req) ?? {
+   223→          ok: false as const,
+   224→          error: 'модуль модфорджа недоступен',
+   225→        }) as Result<{ rolls: RolledModEntry[]; detail: { budget: number; refund: number; spent: number } }>,
+   226→      applyRolls: (iid, rolls) =>
+   227→        (modules.call('inventory', 'inventory.setRolls', iid, rolls) ?? {
+   228→          ok: false as const,
+   229→          error: 'модуль инвентаря недоступен',
+   230→        }) as Result<unknown>,
+   231→    }),
+   232→  );
+   233→  director.activate('forge');
+   234→
+   235→  // --- M05 «Ферма» (фаза 3): энергия/семя/урожай/вместимость — колбэки
+   236→  //     app-слоя (П4, паттерн craft — прецеденты D33/D38/C4); удобрение —
+   237→  //     валюта кошелька, модуль проводит её сам через TransactionService
+   238→  //     из контекста активации; гейты культур — player.ctxExtras
+   239→  //     [M05.3 · G6] + quests.gateExtras (N10-прецедент магазина): гейт
+   240→  //     солнечника читает ачивку «Агроном» (achievement:<id> из флагов M15)
+   241→  modules.register(
+   242→    new FarmModule({
+   243→      gateExtras: () =>
+   244→        ({
+   245→          ...(modules.call('player', 'player.ctxExtras') ?? {}),
+   246→          ...(modules.call('quests', 'quests.gateExtras') ?? {}),
+   247→        }) as Record<string, unknown>,
+   248→      withEnergy: (stat, action, reason) =>
+   249→        (modules.call('player', 'player.withEnergy', stat, action, reason) ?? {
+   250→          ok: false as const,
+   251→          error: 'модуль игрока недоступен',
+   252→        }) as Result<unknown>,
+   253→      removeSeed: (defId, qty, source) =>
+   254→        (modules.call('inventory', 'inventory.remove', defId, qty, source) ?? {
+   255→          ok: false as const,
+   256→          error: 'модуль инвентаря недоступен',
+   257→        }) as Result<unknown>,
+   258→      deliverCrop: (defId, tier, value, qty, source) =>
+   259→        (modules.call('inventory', 'inventory.add', defId, tier, value, qty, source) ?? {
+   260→          ok: false as const,
+   261→          error: 'модуль инвентаря недоступен',
+   262→        }) as Result<unknown>,
+   263→      probeCapacity: (defId, qty) =>
+   264→        (modules.call('inventory', 'inventory.canAcquire', defId, qty) ?? {
+   265→          ok: false as const,
+   266→          error: 'модуль инвентаря недоступен',
+   267→        }) as Result<{ fits: boolean; free: number; newEntries: number }>,
+   268→    }),
+   269→  );
+   270→  director.activate('farm');
+   271→
+   272→  // --- M06 «Загон» (фаза 3): энергия/выдача продукции/вместимость — колбэки
+   273→  //     app-слоя (П4, паттерн фермы — прецеденты D33/D38/C4); золото покупки
+   274→  //     и Корм — модуль проводит сам через TransactionService из контекста
+   275→  //     активации; гейты животных — player.ctxExtras + quests.gateExtras
+   276→  //     (N10-прецедент: гейт Свиньи читает ачивку «Грибник»)
+   277→  modules.register(
+   278→    new PenModule({
+   279→      gateExtras: () =>
+   280→        ({
+   281→          ...(modules.call('player', 'player.ctxExtras') ?? {}),
+   282→          ...(modules.call('quests', 'quests.gateExtras') ?? {}),
+   283→        }) as Record<string, unknown>,
+   284→      withEnergy: (stat, action, reason) =>
+   285→        (modules.call('player', 'player.withEnergy', stat, action, reason) ?? {
+   286→          ok: false as const,
+   287→          error: 'модуль игрока недоступен',
+   288→        }) as Result<unknown>,
+   289→      deliverProduct: (defId, tier, value, qty, source) =>
+   290→        (modules.call('inventory', 'inventory.add', defId, tier, value, qty, source) ?? {
+   291→          ok: false as const,
+   292→          error: 'модуль инвентаря недоступен',
+   293→        }) as Result<unknown>,
+   294→      probeCapacity: (defId, qty) =>
+   295→        (modules.call('inventory', 'inventory.canAcquire', defId, qty) ?? {
+   296→          ok: false as const,
+   297→          error: 'модуль инвентаря недоступен',
+   298→        }) as Result<{ fits: boolean; free: number; newEntries: number }>,
+   299→    }),
+   300→  );
+   301→  director.activate('pen');
+   302→
+   303→  // --- M07 «Рыбалка» (фаза 3): энергия/выдача/экипировка/износ/роллы —
+   304→  //     колбэки app-слоя (П4, паттерн pen — прецеденты D33/D38/C4); золото
+   305→  //     покупок и расход наживки модуль проводит сам через TransactionService
+   306→  //     из контекста активации; гейт-условия рыб — player.ctxExtras +
+   307→  //     quests.gateExtras (N10-прецедент); событие fish.caught поднимает
+   308→  //     XP/навык/счётчики таблицами M01 с фазы 1 — без вайринга
+   309→  modules.register(
+   310→    new FishingModule({
+   311→      gateExtras: () =>
+   312→        ({
+   313→          ...(modules.call('player', 'player.ctxExtras') ?? {}),
+   314→          ...(modules.call('quests', 'quests.gateExtras') ?? {}),
+   315→        }) as Record<string, unknown>,
+   316→      withEnergy: (stat, action, reason) =>
+   317→        (modules.call('player', 'player.withEnergy', stat, action, reason) ?? {
+   318→          ok: false as const,
+   319→          error: 'модуль игрока недоступен',
+   320→        }) as Result<unknown>,
+   321→      equippedView: () =>
+   322→        (modules.call('inventory', 'inventory.equipped') ?? []) as Array<{
+   323→          slot: string;
+   324→          slotName: string;
+   325→          entry: { iid: ID; defId: ID; qty: number };
+   326→        }>,
+   327→      acquire: (defId, qty, source) =>
+   328→        (modules.call('inventory', 'inventory.acquire', defId, qty, source) ?? {
+   329→          ok: false as const,
+   330→          error: 'модуль инвентаря недоступен',
+   331→        }) as Result<{ quality: { tier: QualityTier; value: number }; iids: ID[] }>,
+   332→      probeCapacity: (defId, qty) =>
+   333→        (modules.call('inventory', 'inventory.canAcquire', defId, qty) ?? {
+   334→          ok: false as const,
+   335→          error: 'модуль инвентаря недоступен',
+   336→        }) as Result<{ fits: boolean; free: number; newEntries: number }>,
+   337→      unequip: (slot) =>
+   338→        (modules.call('inventory', 'inventory.unequip', slot) ?? {
+   339→          ok: false as const,
+   340→          error: 'модуль инвентаря недоступен',
+   341→        }) as Result<unknown>,
+   342→      equip: (iid, slot) =>
+   343→        (modules.call('inventory', 'inventory.equip', iid, slot) ?? {
+   344→          ok: false as const,
+   345→          error: 'модуль инвентаря недоступен',
+   346→        }) as Result<unknown>,
+   347→      findEntryByDef: (defId) => {
+   348→        const items = (modules.call('inventory', 'inventory.list') ?? []) as Array<{
+   349→          iid: ID;
+   350→          defId: string;
+   351→        }>;
+   352→        return items.find((i) => i.defId === defId)?.iid ?? null;
+   353→      },
+   354→      wear: (iid, n) =>
+   355→        (modules.call('inventory', 'inventory.wear', iid, n) ?? {
+   356→          ok: false as const,
+   357→          error: 'модуль инвентаря недоступен',
+   358→        }) as Result<{ current: number; max: number; broken: boolean }>,
+   359→      // [M07.2 · F13] расход карты при «Открыть сейчас» (штатный канал M02)
+   360→      removeItem: (defId, qty, source) =>
+   361→        (modules.call('inventory', 'inventory.remove', defId, qty, source) ?? {
+   362→          ok: false as const,
+   363→          error: 'модуль инвентаря недоступен',
+   364→        }) as Result<unknown>,
+   365→      // [M07.2 · F14] исход skillXp событий-мини (publicApi M01)
+   366→      grantSkillXp: (skill, amount, source) => {
+   367→        modules.call('player', 'skills.addXp', skill, amount, source);
+   368→      },
+   369→      rollItem: (defId, streamKey, target) =>
+   370→        (modules.call('modforge', 'modforge.rollItem', defId, streamKey, target) ?? {
+   371→          ok: false as const,
+   372→          error: 'модуль модфорджа недоступен',
+   373→        }) as Result<{ rolls: RolledModEntry[] }>,
+   374→      applyRolls: (iid, rolls) =>
+   375→        (modules.call('inventory', 'inventory.setRolls', iid, rolls) ?? {
+   376→          ok: false as const,
+   377→          error: 'модуль инвентаря недоступен',
+   378→        }) as Result<unknown>,
+   379→      itemCount: (defId) => {
+   380→        const items = (modules.call('inventory', 'inventory.list') ?? []) as Array<{
+   381→          defId: string;
+   382→          qty: number;
+   383→        }>;
+   384→        return items.filter((i) => i.defId === defId).reduce((s, i) => s + i.qty, 0);
+   385→      },
+   386→    }),
+   387→  );
+   388→  director.activate('fishing');
+   389→
+   390→  // --- M08 «Озеро» (фаза 3): энергия/инвентарь — колбэки app-слоя (П4,
+   391→  //     паттерн pen/fishing — прецеденты D33/D38/C4); Корм/золото/лекарство —
+   392→  //     модуль проводит сам через TransactionService из контекста активации;
+   393→  //     дефы рыб — чтение общих таблиц контента (без импорта fishing);
+   394→  //     монтаж ПОСЛЕ fishing ДО quests (бриф F2, прецедент pen → fishing)
+   395→  modules.register(
+   396→    new LakeModule({
+   397→      withEnergy: (stat, action, reason) =>
+   398→        (modules.call('player', 'player.withEnergy', stat, action, reason) ?? {
+   399→          ok: false as const,
+   400→          error: 'модуль игрока недоступен',
+   401→        }) as Result<unknown>,
+   402→      listInventory: () =>
+   403→        (modules.call('inventory', 'inventory.list') ?? []) as Array<{
+   404→          iid: ID;
+   405→          defId: ID;
+   406→          qty: number;
+   407→          quality: { tier: QualityTier; value: number };
+   408→        }>,
+   409→      removeItem: (defId, qty, source) =>
+   410→        (modules.call('inventory', 'inventory.remove', defId, qty, source) ?? {
+   411→          ok: false as const,
+   412→          error: 'модуль инвентаря недоступен',
+   413→        }) as Result<unknown>,
+   414→      deliverFish: (defId, tier, value, qty, source) =>
+   415→        (modules.call('inventory', 'inventory.add', defId, tier, value, qty, source) ?? {
+   416→          ok: false as const,
+   417→          error: 'модуль инвентаря недоступен',
+   418→        }) as Result<unknown>,
+   419→      probeCapacity: (defId, qty) =>
+   420→        (modules.call('inventory', 'inventory.canAcquire', defId, qty) ?? {
+   421→          ok: false as const,
+   422→          error: 'модуль инвентаря недоступен',
+   423→        }) as Result<{ fits: boolean; free: number; newEntries: number }>,
+   424→    }),
+   425→  );
+   426→  director.activate('lake');
+   427→
+   428→  // --- M11 «Работники» (фаза 3): монтаж ПОСЛЕ lake ДО quests (бриф F8,
+   429→  //     санкция SESSION-M11); изоляция [DECISION-архитектура]: чтение
+   430→  //     живого состояния farm/lake/pen — ТОЛЬКО через витрины publicApi
+   431→  //     (колбэки views), трейты — через ЖИВОЙ ривен-конструктор M03
+   432→  //     (modforge.rollFor, скоуп 'worker'), золото — wallet-сервис ядра
+   433→  //     (расчётный день F6); модуль systems НЕ импортирует (rg ×3 ПУСТ).
+   434→  //     [M11.2 · F10] РАСШИРЕНИЕ ВИТРИННЫХ КОЛБЭКОВ (декларируемое касание
+   435→  //     wiring: МОНТАЖ не изменён — только поля возврата существующих
+   436→  //     колбэков для ЦЕЛЕПОДБОРА директора: тайлы вкладок/активность озёр/
+   437→  //     животные загонов; weedsMax/avgHappiness сохранены — dirtyProbe жив)
+   438→  modules.register(
+   439→    new WorkersModule({
+   440→      views: {
+   441→        // farm.state: вкладки фермы + сорняки (dirtyProbe) + тайлы (директор)
+   442→        farmTabs: () =>
+   443→          ((modules.call('farm', 'farm.state') ?? { tabs: [] }) as {
+   444→            tabs: Array<{
+   445→              id: string;
+   446→              kind: string;
+   447→              tiles: Array<{ index: number; state: string; weeds?: number; wet?: boolean }>;
+   448→            }>;
+   449→          }).tabs.map((t) => ({
+   450→            id: t.id,
+   451→            kind: t.kind,
+   452→            weedsMax: t.tiles.reduce((m, tile) => Math.max(m, tile.weeds ?? 0), 0),
+   453→            tiles: t.tiles.map((tile) => ({
+   454→              index: tile.index,
+   455→              state: tile.state,
+   456→              weeds: tile.weeds ?? 0,
+   457→              wet: tile.wet === true,
+   458→            })),
+   459→          })),
+   460→        // lake.state: чистота озёр + АКТИВНОСТЬ (директор F10: работник
+   461→        // действует только на СВОЁ активное озеро; activeLake/other.idx)
+   462→        lakes: () => {
+   463→          const v = (modules.call('lake', 'lake.state') ?? null) as {
+   464→            activeLake?: number;
+   465→            water?: { cleanliness: number };
+   466→            other?: { idx?: number; water?: { cleanliness: number } } | null;
+   467→          } | null;
+   468→          if (v === null || v.water === undefined) return [];
+   469→          if (v.other != null && v.other.water !== undefined) {
+   470→            const active = v.activeLake ?? 0; // v.water — активное, other — второе
+   471→            return [0, 1].map((i) => ({
+   472→              cleanliness: i === active ? v.water!.cleanliness : v.other!.water!.cleanliness,
+   473→              active: i === active,
+   474→            }));
+   475→          }
+   476→          return [{ cleanliness: v.water.cleanliness, active: true }];
+   477→        },
+   478→        // pen.state: среднее счастье (dirtyProbe) + животные (директор)
+   479→        pens: () => {
+   480→          const v = (modules.call('pen', 'pen.state') ?? null) as {
+   481→            animals?: Array<{ happiness: number; fedToday: boolean; pettedToday: boolean; cleanliness: number }>;
+   482→            pen2?: { animals?: Array<{ happiness: number; fedToday: boolean; pettedToday: boolean; cleanliness: number }> } | null;
+   483→          } | null;
+   484→          if (v === null) return [];
+   485→          const avg = (list: Array<{ happiness: number }> | undefined): number | null =>
+   486→            list === undefined || list.length === 0
+   487→              ? null
+   488→              : list.reduce((s, a) => s + a.happiness, 0) / list.length;
+   489→          const zoo = (list: Array<{ fedToday: boolean; pettedToday: boolean; cleanliness: number }> | undefined) =>
+   490→            (list ?? []).map((a) => ({
+   491→              fedToday: a.fedToday,
+   492→              pettedToday: a.pettedToday,
+   493→              cleanliness: a.cleanliness,
+   494→            }));
+   495→          const pens = [{ avgHappiness: avg(v.animals), animals: zoo(v.animals) }];
+   496→          if (v.pen2 !== null && v.pen2 !== undefined) {
+   497→            pens.push({ avgHappiness: avg(v.pen2.animals), animals: zoo(v.pen2.animals) });
+   498→          }
+   499→          return pens;
+   500→        },
+   501→      },
+   502→      // трейты доски — живой ривен-конструктор M03 (П4: через реестр)
+   503→      rollTraits: (budget, shape, rng) => {
+   504→        const r = modules.call('modforge', 'modforge.rollFor', {
+   505→          budget,
+   506→          scopeTags: ['worker'],
+   507→          shape,
+   508→          rng,
+   509→        }) as { ok: true; value: { rolls: RolledModEntry[] } } | { ok: false; error: string } | null;
+   510→        return r !== null && r.ok ? r.value.rolls : [];
+   511→      },
+   512→      gold: () => wallet.get('gold'),
+   513→      // [M11.2 · F10 · DECISION-энергии] энергетически нейтральный вызов
+   514→      // исполнителя: резерв до капа → run() → восстановление исходного
+   515→      // значения игрока (публичный API игрока по реестру, П4 п.5; override-0
+   516→      // через StatBus НЕ проходит — meta.min = 1 у action.*.energyCost,
+   517→      // канон M01; прецедент pen.autofeeder «механизм, не труд игрока»)
+   518→      withWorkerEnergy: (run: () => Result<unknown>): Result<unknown> => {
+   519→        const snap = () =>
+   520→          (modules.call('player', 'player.snapshot') ?? { energy: { current: 0, max: 0 } }) as {
+   521→            energy: { current: number; max: number };
+   522→          };
+   523→        const before = snap().energy.current;
+   524→        const max = snap().energy.max;
+   525→        if (max > before) {
+   526→          modules.call('player', 'player.grantEnergy', max - before, 'worker.reserve');
+   527→        }
+   528→        try {
+   529→          return run();
+   530→        } finally {
+   531→          modules.call('player', 'player.setEnergy', before);
+   532→        }
+   533→      },
+   534→    }),
+   535→  );
+   536→  director.activate('workers');
+   537→
+   538→  // --- M12 «Шахта» (фаза 4): монтаж ПОСЛЕ workers ДО quests (бриф F2 —
+   539→  //     ЯВНО санкционирован); изоляция: щит/кирка — витрина publicApi M02
+   540→  //     (слоты 'shield'/'pickaxe', чтение колбэком — M02 НЕ тронут); HP — публичный
+   541→  //     API M01 (checkHp/damageHp/healHp — смерть-тег публикует канал M01);
+   542→  //     атака/защита/скорость/крит/урон/вещий/чутьё — StatBus resolve
+   543→  //     (живые статы + equipmentProvider M02); золото — TransactionService
+   544→  //     eventId mine.loot/bossLoot из контекста активации; модуль НЕ импортирует
+   545→  //     чужие модули (rg ×3 ПУСТ).
+   546→  //     [M12.2 · G3/G4] тир кирки — живой канал forge.effectiveTier (M10 §2:
+   547→  //     качество + floor(заточка/tierStepLevels), клэмп SS); гейт ачивки —
+   548→  //     Requirement-оценщик (прецедент gateExtras M04/N10); износ — inventory.
+   549→  //     wear (D35, «потребители M05+»); энергия — player.spendEnergy по стату
+   550→  //     action.mine.enter.energyCost (данные bases с фазы 0); A+-предмет —
+   551→  //     inventory.add каналом точного тира (прецедент craft.collect)
+   552→  modules.register(
+   553→    new MineModule({
+   554→      shieldView: () => {
+   555→        const eq = (modules.call('inventory', 'inventory.equipped') ?? []) as Array<{
+   556→          slot: string;
+   557→          entry: { iid: ID; quality?: { tier: QualityTier } };
+   558→        }>;
+   559→        const shield = eq.find((e) => e.slot === 'shield');
+   560→        return { hasShield: shield !== undefined, tier: shield?.entry.quality?.tier ?? null };
+   561→      },
+   562→      pickaxeView: () => {
+   563→        const eq = (modules.call('inventory', 'inventory.equipped') ?? []) as Array<{
+   564→          slot: string;
+   565→          entry: {
+   566→            iid: ID;
+   567→            defId: ID;
+   568→            quality?: { tier: QualityTier; value: number };
+   569→          };
+   570→        }>;
+   571→        const pick = eq.find((e) => e.slot === 'pickaxe');
+   572→        if (pick === undefined) {
+   573→          return {
+   574→            hasPickaxe: false,
+   575→            defId: null,
+   576→            iid: null,
+   577→            tier: 0,
+   578→            quality: null,
+   579→            forgeLevel: 0,
+   580→            name: null,
+   581→          };
+   582→        }
+   583→        const q = pick.entry.quality?.tier ?? 'D';
+   584→        // [M12.2 · шов] forge.effectiveTier не видит ЭКИПИРОВАННЫЕ записи
+   585→        // (listItems = лист рюкзака, D30-семантика гейта заточки), поэтому тир
+   586→        // витрины собирается из тех же живых каналов ЧИСТОЙ функцией M10:
+   587→        // forge.levelOf + effectiveQualityOf (формула floor(L/tierStepLevels)
+   588→        // НЕ дублируется — таблица из реестра 'forge')
+   589→        const level = (modules.call('forge', 'forge.levelOf', pick.entry.iid) ?? 0) as number;
+   590→        const forgeTable = content.get<ForgeTable>('forge');
+   591→        const eff =
+   592→          forgeTable !== undefined && pick.entry.quality !== undefined
+   593→            ? effectiveQualityOf(q, pick.entry.quality.value, level, forgeTable).tier
+   594→            : q;
+   595→        const def = (content.get<Array<{ id: ID; name: string }>>('items') ?? []).find(
+   596→          (d) => d.id === pick.entry.defId,
+   597→        );
+   598→        const tierNumbers: Record<QualityTier, number> = { D: 1, C: 2, B: 3, A: 4, S: 5, SS: 6 };
+   599→        return {
+   600→          hasPickaxe: true,
+   601→          defId: pick.entry.defId,
+   602→          iid: pick.entry.iid,
+   603→          tier: tierNumbers[eff],
+   604→          quality: q,
+   605→          forgeLevel: level,
+   606→          name: def?.name ?? pick.entry.defId,
+   607→        };
+   608→      },
+   609→      gateExtras: () =>
+   610→        ({
+   611→          ...(modules.call('player', 'player.ctxExtras') ?? {}),
+   612→          ...(modules.call('quests', 'quests.gateExtras') ?? {}),
+   613→        }) as Record<string, unknown>,
+   614→      itemCount: (defId) => {
+   615→        const items = (modules.call('inventory', 'inventory.list') ?? []) as Array<{
+   616→          defId: ID;
+   617→          qty: number;
+   618→        }>;
+   619→        return items.filter((i) => i.defId === defId).reduce((s, i) => s + i.qty, 0);
+   620→      },
+   621→      wear: (iid, n) =>
+   622→        (modules.call('inventory', 'inventory.wear', iid, n) ?? {
+   623→          ok: false as const,
+   624→          error: 'модуль инвентаря недоступен',
+   625→        }) as Result<{ before: number; current: number; max: number; broken: boolean }>,
+   626→      spendEnterEnergy: (reason) =>
+   627→        (modules.call('player', 'player.spendEnergy', 'action.mine.enter.energyCost', reason) ?? {
+   628→          ok: false as const,
+   629→          error: 'модуль игрока недоступен',
+   630→        }) as Result<{ cost: number; current: number; max: number }>,
+   631→      addItem: (defId, tier, qty, source) =>
+   632→        (modules.call('inventory', 'inventory.add', defId, tier, 0, qty, source) ?? {
+   633→          ok: false as const,
+   634→          error: 'модуль инвентаря недоступен',
+   635→        }) as Result<unknown>,
+   636→      canAcquire: (defId, qty) =>
+   637→        (modules.call('inventory', 'inventory.canAcquire', defId, qty) ?? {
+   638→          ok: false as const,
+   639→          error: 'модуль инвентаря недоступен',
+   640→        }) as Result<{ fits: boolean; free: number; newEntries: number }>,
+   641→      playerHp: () =>
+   642→        (modules.call('player', 'player.checkHp') ?? { current: 1, max: 1, alive: true }) as {
+   643→          current: number;
+   644→          max: number;
+   645→        },
+   646→      damageHp: (amount, reason) => {
+   647→        modules.call('player', 'player.damageHp', amount, reason);
+   648→      },
+   649→      healHp: (amount, reason) => {
+   650→        modules.call('player', 'player.healHp', amount, reason);
+   651→      },
+   652→    }),
+   653→  );
+   654→  director.activate('mine');
+   655→
+   656→  // --- M15 «Квесты» (фаза 2): активируется ПОСЛЕДНИМ — подписки движка
+   657→  //     встают после CountersEngine M01 (счётчики подняты до переоценки);
+   658→  //     уровень/навыки — player.ctxExtras, hasItem — рюкзак (П4, прецеденты
+   659→  //     D38/C4: itemCount по канону M04 — inventory.list, экипированные
+   660→  //     записи не учитываются, владение уже состоявшейся выдачей)
+   661→  modules.register(
+   662→    new QuestsModule(
+   663→      {
+   664→        gateExtras: () =>
+   665→          (modules.call('player', 'player.ctxExtras') ?? {}) as Record<string, unknown>,
+   666→        itemCount: (defId) => {
+   667→          const items = (modules.call('inventory', 'inventory.list') ?? []) as Array<{
+   668→            iid: string;
+   669→            defId: string;
+   670→            qty: number;
+   671→          }>;
+   672→          return items.filter((i) => i.defId === defId).reduce((s, i) => s + i.qty, 0);
+   673→        },
+   674→        saveId: () => save.getSaveId(),
+   675→      },
+   676→      content.get<CounterDef[]>('player.counters'),
+   677→    ),
+   678→  );
+   679→  director.activate('quests');
+   680→}
+   681→
