@@ -103,9 +103,10 @@ export function localDateISO(ms: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-/** дневной тик на границе суток после T0+N дней (публикация как catchUp) */
+/** дневной тик дня N (полдень дня T0+N — T0 сам полдень, dateISO = ЭТОТ
+ * день; публикация как catchUp — паттерн lake-фикстур) */
 export function dayTickAt(f: VillageFixture, plusDays: number): void {
-  const ms = VILLAGE_T0 + plusDays * VILLAGE_DAY + VILLAGE_DAY / 2; // полдень границы
+  const ms = VILLAGE_T0 + plusDays * VILLAGE_DAY; // полдень дня plusDays
   f.clock.set(ms);
   f.game.bus.publish('time.dayTick', {
     dayIndex: Math.floor(ms / VILLAGE_DAY),

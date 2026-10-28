@@ -5,6 +5,7 @@
  */
 import { VILLAGERS } from '@/content/village/villagers';
 import { VILLAGE_NEEDS } from '@/content/village/needs';
+import type { VillagerDef } from '@/content/village/types';
 import { VILLAGE_TABLE, villageLevelOf } from '@/content/village/table';
 import { rollDailyNeed, rollNeedFor, rollWeeklyNeed, type VillagerLiveState } from '@/game/modules/village/logic';
 import { check, type CheckResult } from './types';
@@ -133,14 +134,27 @@ export async function runVillagePart1(): Promise<CheckResult[]> {
     const pools = VILLAGE_NEEDS;
     const pure1 = JSON.stringify(rollDailyNeed('v161-det', def, pools, DAY0));
     const pure2 = JSON.stringify(rollDailyNeed('v161-det', def, pools, DAY0));
-    const wMon = JSON.stringify(rollWeeklyNeed('v161-det', def, pools, '2026-10-26'));
-    const wFri = JSON.stringify(rollWeeklyNeed('v161-det', def, pools, '2026-10-30'));
-    const wNext = JSON.stringify(rollWeeklyNeed('v161-det', def, pools, '2026-11-02'));
+    // weekly: сид — якорь iso-недели (стабилен пн–вс), day-маркер — дата
+    // ролла (инвариант state.ts). Синтетический житель с ДВУМЯ кандидатами
+    // (honey w3 / cloth w4) — предвычислено: неделя 2026-10-26 → cloth ×3,
+    // неделя 2026-11-02 → honey ×2 (оракул .zscripts/m161-weekly-probe.ts)
+    const synth: VillagerDef = {
+      id: 'villager_synth',
+      name: 'Синт',
+      profession: 'Тест',
+      needs: { daily: [], weekly: [{ defId: 'honey', qty: 2 }, { defId: 'cloth', qty: 3 }] },
+    };
+    const wMon = rollWeeklyNeed('v161-det', synth, pools, '2026-10-26');
+    const wFri = rollWeeklyNeed('v161-det', synth, pools, '2026-10-30');
+    const wNext = rollWeeklyNeed('v161-det', synth, pools, '2026-11-02');
+    const weekStable = wMon !== undefined && wFri !== undefined && wMon.item === wFri.item && wMon.qty === wFri.qty;
+    const dayTracks = wMon?.day === '2026-10-26' && wFri?.day === '2026-10-30' && wNext?.day === '2026-11-02';
+    const newWeekRoll = wMon !== undefined && wNext !== undefined && wNext.item !== wMon.item;
     results.push(
       check(
-        'детерминизм потребностей ×2 (G2): две игры одного saveId — байт-идентичны; чистый ролл ×2 совпадает; weekly стабилен всю iso-неделю (пн≈пт), новая неделя — новый ролл',
-        () => rows1 === rows2 && pure1 === pure2 && wMon === wFri && wMon !== wNext,
-        { expected: 'rows=rows; weekly стабилен в неделе', actual: `rows ${rows1 === rows2 ? '=' : '≠'}; weekly ${wMon === wFri ? '=' : '≠'}` },
+        'детерминизм потребностей ×2 (G2): две игры одного saveId — байт-идентичны; чистый ролл ×2 совпадает; weekly: сид = якорь iso-недели (пн≈пт по предмету/количеству — синтетика с 2 кандидатами), новая неделя — ДРУГОЙ предмет (новый ролл), day-маркер = дата ролла',
+        () => rows1 === rows2 && pure1 === pure2 && weekStable && dayTracks && newWeekRoll,
+        { expected: 'rows=rows; weekly стабилен в неделе; новая неделя — новый ролл', actual: `rows ${rows1 === rows2 ? '=' : '≠'}; weekly ${weekStable ? 'стабилен' : 'FAIL'}; новая неделя ${newWeekRoll ? 'новый предмет' : 'FAIL'}; day ${dayTracks ? 'ок' : 'FAIL'}` },
       ),
     );
     f1.dispose();

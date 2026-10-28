@@ -63,7 +63,7 @@ function printState(ctx: CommandContext, v: StateView): void {
       r.need === null
         ? 'потребности нет'
         : r.need.satisfied
-          ? `доволен (${r.need.item} ×${r.need.kind === 'weekly' ? r.need.qty : r.need.qty} — ${r.need.kind})`
+          ? `доволен (${r.need.item} ×${r.need.qty} — ${r.need.kind})`
           : `просит ${r.need.item} ×${r.need.qty} (${r.need.kind})`;
     ctx.print(
       `    ${r.name} (${r.profession}) — счастье ${r.happiness}/100${r.grumbler ? ` · ВОРЧУН (${r.grumbleDays} дн.)` : ''} · ${need}`,

@@ -203,13 +203,13 @@ export async function runLake2AchChecks(): Promise<CheckResult[]> {
     const narkaCaught = f.game.stats.get('fish.ice_char') ?? 0;
     const ach = ACHIEVEMENTS.find((a) => a.id === 'ach_lake_master');
     results.push(
-      check('ачивка F15 «Хозяин озера» конец-в-конец: реестр 60 → 61 ([M12.2] пул M15 легально расширен +9 ачивками шахты ach_mine_boss_1..9 — расширение = факту, прецедент чека 26 FIX-M11; условие {t:any} counterAtLeast lake.bred.a/s/ss ≥ 1 — «A+» = A/S/SS [DECISION-чтение]); фикстура икры тира A (Лаборатория plus2) → lake.bred → счётчик lake.bred.a → achievement.unlocked → флаг ach.lake.master → claim (канон M15 §6) +800з; нерка: ДО — fish.force отказ «нужна ачивка „Хозяин озера“» (гейт-оценщик жив), ПОСЛЕ — спот-улов force в реке (fish.ice_char 1) — дифф fishing = ПУСТ', () =>
-        regBefore === 61 && ach !== undefined && ach.condition.t === 'any' &&
+      check('ачивка F15 «Хозяин озера» конец-в-конец: реестр 61 → 62 ([M12.2] пул M15 легально расширен +9 ачивками шахты ach_mine_boss_1..9; [M16.1] +1 ach_homestead_master «Мастер хутора» — гейт деревни, ветка (б) DECISION M161-гейт — расширение = факту, прецедент чека 26 FIX-M11; условие {t:any} counterAtLeast lake.bred.a/s/ss ≥ 1 — «A+» = A/S/SS [DECISION-чтение]); фикстура икры тира A (Лаборатория plus2) → lake.bred → счётчик lake.bred.a → achievement.unlocked → флаг ach.lake.master → claim (канон M15 §6) +800з; нерка: ДО — fish.force отказ «нужна ачивка „Хозяин озера“» (гейт-оценщик жив), ПОСЛЕ — спот-улов force в реке (fish.ice_char 1) — дифф fishing = ПУСТ', () =>
+        regBefore === 62 && ach !== undefined && ach.condition.t === 'any' &&
         !narkaBeforeForce.ok && (narkaBeforeForce.error.includes('ach_lake_master') || narkaBeforeForce.error.includes('Хозяин озера')) &&
         unlocked.includes('ach_lake_master') && flags.includes('ach.lake.master') &&
         claim.ok && gold1 - gold0 === 800 &&
         narkaAfterForce.ok && narkaCaught === 1, {
-        expected: '61 в реестре (факт M12.2); unlocked+claim+800з; нерка: отказ → улов',
+        expected: '62 в реестре (61 факт M12.2 + ach_homestead_master M16.1); unlocked+claim+800з; нерка: отказ → улов',
         actual: `реестр ${regBefore}; события ${unlocked.join(',')}; claim ${claim.ok} (+${gold1 - gold0}з); нерка: до «${narkaBeforeForce.ok ? 'ок??' : narkaBeforeForce.error.slice(0, 60)}» / после ${narkaAfterForce.ok} (fish.ice_char ${narkaCaught})`,
       }),
     );

@@ -108,12 +108,12 @@ export async function runLakeChecks(): Promise<CheckGroup> {
     const v = lakeView(f);
     const info = (f.game.save as unknown as { info: () => { saveVersion: number; slices: string[] } }).info();
     results.push(
-      check('монтаж: честная новая игра → v15, срез lake в списке (20 срезов — +workers [M11 · v14] +mine [M12.1 · v15] +passives [M14 · ленивый срез]); витрина: вода 15°/70, слоты 0/6 пустые, икра пуста, статы нули', () =>
-        info.saveVersion === SAVE_VERSION && info.saveVersion === 15 && info.slices.length === 20 && info.slices.includes('lake') && info.slices.includes('passives') &&
+      check('монтаж: честная новая игра → v15, срез lake в списке (21 срез — +workers [M11 · v14] +mine [M12.1 · v15] +passives [M14 · ленивый срез] +village [M16.1 · ленивый срез]); витрина: вода 15°/70, слоты 0/6 пустые, икра пуста, статы нули', () =>
+        info.saveVersion === SAVE_VERSION && info.saveVersion === 15 && info.slices.length === 21 && info.slices.includes('lake') && info.slices.includes('passives') && info.slices.includes('village') &&
         v.water.temperature === 15 && v.water.cleanliness === 70 &&
         v.slots.used === 0 && v.slots.base === 6 && v.fish.length === 0 && v.roe.length === 0 &&
         v.stats.released === 0 && v.stats.bred === 0 && v.stats.harvested === 0 && v.hungryCount === 0, {
-        expected: 'v15/20 срезов; 15/70; 0/6; икра пуста; статы нули',
+        expected: 'v15/21 срез; 15/70; 0/6; икра пуста; статы нули',
         actual: `v${info.saveVersion}/${info.slices.length}; ${v.water.temperature}/${v.water.cleanliness}; ${v.slots.used}/${v.slots.base}; икра ${v.roe.length}; статы ${v.stats.released}/${v.stats.bred}/${v.stats.harvested}`,
       }),
     );

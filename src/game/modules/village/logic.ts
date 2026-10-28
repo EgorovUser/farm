@@ -74,7 +74,13 @@ export const rollWeeklyNeed = (
   def: VillagerDef,
   pools: VillageNeedsTable,
   dateISO: string,
-): VillageNeedState | undefined => pickNeed(saveId, def, pools, 'weekly', weekAnchorOf(dateISO));
+): VillageNeedState | undefined => {
+  // сид — якорь iso-недели (стабилен пн–вс: перезапуск внутри недели
+  // переролла НЕ даёт); day-маркер — ДАТА РОЛЛА (инвариант state.ts:
+  // need.day = день обработки, weekly подтверждается ежедневно)
+  const need = pickNeed(saveId, def, pools, 'weekly', weekAnchorOf(dateISO));
+  return need === undefined ? undefined : { ...need, day: dateISO };
+};
 
 // ---------------------------------------------------------------- состояние потребности
 

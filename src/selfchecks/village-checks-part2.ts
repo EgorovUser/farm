@@ -18,7 +18,6 @@ import {
   makeVillageGame,
   openVillageGate,
   taxEventsOf,
-  VILLAGE_DAY,
   VILLAGE_T0,
   type R,
   type VillageFixture,
@@ -199,9 +198,9 @@ export async function runVillagePart2(): Promise<CheckResult[]> {
     dayTickAt(f, 1);
     const taxes1 = taxEventsOf(f).length;
     const gold1 = goldOf(f);
-    // ПОВТОР того же дня (тот же dateISO/now — ручной реплей границы)
-    const ms = VILLAGE_T0 + VILLAGE_DAY + VILLAGE_DAY / 2;
-    f.game.bus.publish('time.dayTick', { dayIndex: Math.floor(ms / VILLAGE_DAY), now: ms, catchUp: true, dateISO: localDateISO(ms) });
+    // ПОВТОР того же дня (ручной реплей: второй тик с ИДЕНТИЧНЫМ полднем
+    // дня 1 — тот же dateISO/now/dayIndex, что у первого тика)
+    dayTickAt(f, 1);
     const taxes2 = taxEventsOf(f).length;
     const gold2 = goldOf(f);
     dayTickAt(f, 2);
