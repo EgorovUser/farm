@@ -31,6 +31,9 @@ import { LakeModule } from './modules/lake/module';
 import { WorkersModule } from './modules/workers/module';
 import { MineModule } from './modules/mine/module';
 import { PassivesModule } from './modules/passives/module';
+// [M16.1] Деревня: монтаж ПОСЛЕ passives ДО quests (бриф §0 — ЯВНО
+// санкционировано, прецедент M14.1)
+import { VillageModule } from './modules/village/module';
 import { QuestsModule } from './modules/quests/module';
 import type { DeliverReceipt } from './modules/shop/purchase';
 import type { PlayerTable } from '@/content/player/progression';
@@ -715,6 +718,119 @@ export function wireGameModules(
     }),
   );
   director.activate('passives');
+
+  // --- M16.1 «Деревня» (фаза 5): монтаж ПОСЛЕ passives ДО quests (бриф
+  //     SESSION-M16.1 §0 — санкционированная строка; прецедент M14.1).
+  //     Изоляция (П4): гейт — уровень/флаг через витрины publicApi M01/M15;
+  //     ConditionCtx unlock-гейтов жителей — stat через StatBus
+  //     (villageProvider override), остальное — deps-коллбэки; поставка —
+  //     TransactionService (app-шов ctx.transaction); подарки-предметы с
+  //     ТИРОМ — канал inventory.add (прецедент addItemQ M13) + D23-проба;
+  //     помощь — ctx.tasks.runTask СУЩЕСТВУЮЩИХ типов + энергонейтральная
+  //     обёртка (прецедент withWorkerEnergy M11.2/M13.2); импорт игровых
+  //     модулей — 0 (линтер изоляции rg ×3).
+  modules.register(
+    new VillageModule({
+      playerLevel: () =>
+        Number((modules.call('player', 'player.ctxExtras') as Record<string, unknown> | null ?? {})['player:level'] ?? 0),
+      hasFlag: (flag) =>
+        Boolean((modules.call('quests', 'quests.gateExtras') as Record<string, unknown> | null ?? {})[`flag:${flag}`]),
+      hasAchievement: (id) =>
+        Boolean(
+          (modules.call('quests', 'quests.gateExtras') as Record<string, unknown> | null ?? {})[
+            `achievement:${id}`
+          ],
+        ),
+      skillLevel: (skill) =>
+        Number((modules.call('player', 'player.ctxExtras') as Record<string, unknown> | null ?? {})[`skill:${skill}`] ?? 0),
+      itemCount: (defId) =>
+        ((modules.call('inventory', 'inventory.list') ?? []) as Array<{ defId: string; qty: number }>)
+          .filter((i) => i.defId === defId)
+          .reduce((s, i) => s + i.qty, 0),
+      saveId: () => save.getSaveId(),
+      giveItem: (defId, tier, value, qty, source) =>
+        (modules.call('inventory', 'inventory.add', defId, tier, value, qty, source) ?? {
+          ok: false as const,
+          error: 'модуль инвентаря недоступен',
+        }) as Result<unknown>,
+      canAcquireItem: (defId, qty) =>
+        (modules.call('inventory', 'inventory.canAcquire', defId, qty) ?? {
+          fits: false,
+          free: 0,
+          newEntries: 0,
+        }) as { fits: boolean; free: number; newEntries: number },
+      withVillagerEnergy: (run: () => Result<unknown>): Result<unknown> => {
+        const snap = () =>
+          (modules.call('player', 'player.snapshot') ?? { energy: { current: 0, max: 0 } }) as {
+            energy: { current: number; max: number };
+          };
+        const before = snap().energy.current;
+        const max = snap().energy.max;
+        if (max > before) {
+          modules.call('player', 'player.grantEnergy', max - before, 'villager.reserve');
+        }
+        try {
+          return run();
+        } finally {
+          modules.call('player', 'player.setEnergy', before);
+        }
+      },
+      views: {
+        farmTabs: () =>
+          ((modules.call('farm', 'farm.state') ?? { tabs: [] }) as {
+            tabs: Array<{
+              id: string;
+              tiles: Array<{ index: number; state: string; weeds?: number; wet?: boolean }>;
+            }>;
+          }).tabs.map((t) => ({
+            id: t.id,
+            tiles: t.tiles.map((tile) => ({
+              index: tile.index,
+              state: tile.state,
+              weeds: tile.weeds ?? 0,
+              wet: tile.wet === true,
+            })),
+          })),
+        lakes: () => {
+          const v = (modules.call('lake', 'lake.state') ?? null) as {
+            activeLake?: number;
+            water?: { cleanliness: number };
+            hungryCount?: number;
+            other?: { water?: { cleanliness: number } } | null;
+          } | null;
+          if (v === null || v.water === undefined) return [];
+          if (v.other != null && v.other.water !== undefined) {
+            const active = v.activeLake ?? 0;
+            return [0, 1].map((i) => ({
+              cleanliness: i === active ? v.water!.cleanliness : v.other!.water!.cleanliness,
+              active: i === active,
+              hungryCount: i === active ? (v.hungryCount ?? 0) : 0,
+            }));
+          }
+          return [{ cleanliness: v.water.cleanliness, active: true, hungryCount: v.hungryCount ?? 0 }];
+        },
+        pens: () => {
+          const v = (modules.call('pen', 'pen.state') ?? null) as {
+            animals?: Array<{ fedToday: boolean; pettedToday: boolean; cleanliness: number }>;
+            pen2?: { animals?: Array<{ fedToday: boolean; pettedToday: boolean; cleanliness: number }> } | null;
+          } | null;
+          if (v === null) return [];
+          const zoo = (list: Array<{ fedToday: boolean; pettedToday: boolean; cleanliness: number }> | undefined) =>
+            (list ?? []).map((a) => ({
+              fedToday: a.fedToday,
+              pettedToday: a.pettedToday,
+              cleanliness: a.cleanliness,
+            }));
+          const pens = [{ animals: zoo(v.animals) }];
+          if (v.pen2 !== null && v.pen2 !== undefined) {
+            pens.push({ animals: zoo(v.pen2.animals) });
+          }
+          return pens;
+        },
+      },
+    }),
+  );
+  director.activate('village');
 
   // --- M15 «Квесты» (фаза 2): активируется ПОСЛЕДНИМ — подписки движка
   //     встают после CountersEngine M01 (счётчики подняты до переоценки);

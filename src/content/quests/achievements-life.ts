@@ -73,6 +73,25 @@ export const ACHIEVEMENTS_LIFE: AchievementDef[] = [
     unlockFlags: ['player.level30'],
   },
   {
+    id: 'ach_homestead_master',
+    name: 'Мастер хутора',
+    // [M16.1 · ветка (б) DECISION M161-гейт] РОВНО ОДНА новая ачивка:
+    // пул 61 → 62 (открыто в M16.1-REPORT/worklog); unlockFlag — гейт
+    // открытия деревни (уровень 30 + ЭТА ачивка); БЕЗ passivePoint — очки
+    // пассивок НЕ растут (канон M14/points.ts не трогается). Семантика:
+    // разносторонний хозяин — уровневый рост + урожаи + рыбалка.
+    condition: {
+      t: 'all',
+      cs: [
+        { t: 'playerLevel', level: 25 },
+        { t: 'counterAtLeast', counter: 'farm.harvest.batches', value: 50 },
+        { t: 'counterAtLeast', counter: 'fish.total', value: 30 },
+      ],
+    },
+    rewards: [{ t: 'currency', id: 'gold', qty: 800 }], // тюнюется
+    unlockFlags: ['village.homestead.master'],
+  },
+  {
     id: 'ach_hard_worker',
     name: 'Трудяга',
     condition: { t: 'counterAtLeast', counter: 'player.energy.spent', value: 1000 },

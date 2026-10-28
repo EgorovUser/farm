@@ -102,6 +102,23 @@ import { PASSIVES_POINTS } from '@/content/passives/points';
 import { PASSIVES_RESPEC } from '@/content/passives/respec';
 import { PASSIVES_BASES_TABLE } from '@/content/passives/bases';
 import { passivesPointsSchema, passivesRespecSchema, passivesTreeSchema } from '@/content/passives/schemas';
+// [M16.1] контент деревни: жители/потребности/налог/подарки/помощь + баланс
+// (бриф §0 «Леджер прав»; карточка M16 §2–§3; числа — только здесь, П1/П6)
+import { VILLAGERS } from '@/content/village/villagers';
+import { VILLAGE_NEEDS } from '@/content/village/needs';
+import { VILLAGE_TAX } from '@/content/village/tax';
+import { VILLAGE_GIFTS } from '@/content/village/gifts';
+import { VILLAGE_HELP } from '@/content/village/help';
+import { VILLAGE_BASES_TABLE, VILLAGE_TABLE } from '@/content/village/table';
+import {
+  villageBasesSchema,
+  villageGiftsSchema,
+  villageHelpSchema,
+  villageNeedsSchema,
+  villageTableSchema,
+  villageTaxSchema,
+  villagersSchema,
+} from '@/content/village/schemas';
 import {
   eliteModsSchema,
   mineMobsSchema,
@@ -130,7 +147,7 @@ export function registerContent(content: ContentRegistry): void {
   content.register(
     'bases',
     basesTableSchema,
-    mergeBaseTables(BASES_TABLE, PLAYER_BASES_TABLE, INVENTORY_BASES_TABLE, SHOP_BASES_TABLE, CRAFT_BASES_TABLE, FORGE_BASES_TABLE, FARM_BASES_TABLE, PEN_BASES_TABLE, FISH_BASES_TABLE, LAKE_BASES_TABLE, WORKERS_BASES_TABLE, PASSIVES_BASES_TABLE),
+    mergeBaseTables(BASES_TABLE, PLAYER_BASES_TABLE, INVENTORY_BASES_TABLE, SHOP_BASES_TABLE, CRAFT_BASES_TABLE, FORGE_BASES_TABLE, FARM_BASES_TABLE, PEN_BASES_TABLE, FISH_BASES_TABLE, LAKE_BASES_TABLE, WORKERS_BASES_TABLE, PASSIVES_BASES_TABLE, VILLAGE_BASES_TABLE),
   );
   content.register('economy', economySchema, ECONOMY_TABLE);
   content.register('time', timeSchema, TIME_TABLE);
@@ -245,4 +262,15 @@ export function registerContent(content: ContentRegistry): void {
   });
   content.register('passives.points', passivesPointsSchema, PASSIVES_POINTS);
   content.register('passives.respec', passivesRespecSchema, PASSIVES_RESPEC);
+  // --- контент M16 (карточка §2–§3: жители/потребности/налог/подарки/
+  //     помощь — данные, П1; гейт модуля — уровень 30 + ачивка «Мастер
+  //     хутора» [ветка (б) DECISION M161-гейт]; счётчики трендов — M16.3)
+  content.register('village.villagers', villagersSchema, VILLAGERS);
+  content.register('village.needs', villageNeedsSchema, VILLAGE_NEEDS);
+  content.register('village.tax', villageTaxSchema, VILLAGE_TAX);
+  content.register('village.gifts', villageGiftsSchema, VILLAGE_GIFTS);
+  content.register('village.help', villageHelpSchema, VILLAGE_HELP);
+  content.register('village', villageTableSchema, VILLAGE_TABLE);
+  // базы домена: слияние 'bases' (П2; прецедент PASSIVES_BASES_TABLE M14.1)
+  content.register('village.bases', villageBasesSchema, VILLAGE_BASES_TABLE);
 }
