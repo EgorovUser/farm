@@ -1,6 +1,8 @@
 /**
  * Манифест M14 (01-CORE §9): единственное место точек интеграции.
- * Манифест 1.0.0 = факту сеанса M14.1 (бриф §0):
+ * Манифест 1.1.0 = запись объёма M14.2 (бриф §0: «bump — ТОЛЬКО версия»;
+ * полное дерево 150 allocatable + 2 зеркала bases): publicApi/события/
+ * подписки/провайдеры/исполнители — БЕЗ изменений, как в 1.0.0 M14.1:
  *  - publicApi ×5 [DECISION-имена]: passives.state (витрина очков/среза),
  *    passives.tree (текстовая витрина дерева), passives.alloc <nodeId>,
  *    passives.refund <nodeId|all>, passives.canReach <nodeId>;
@@ -19,7 +21,7 @@ export function createPassivesManifest(): ModuleManifest {
   return {
     id: 'passives',
     title: 'M14 Пассивки',
-    version: '1.0.0',
+    version: '1.1.0',
     stateKey: 'passives',
     publicApi: [
       'passives.state',

@@ -19,6 +19,15 @@
  * либо существуют в чужих доменных таблицах (player.*, action.*, farm.*,
  * mine.*, fishing.*, worker.salary.discount…), либо задокументированы ЗДЕСЬ
  * ровно один раз (П2: дубликат = отказ старта).
+ *
+ * [M14.2 · зеркала новой волны] эффекты кластеров полного дерева используют
+ * существующие статы шины; РОВНО ДВА новых зеркала данных (бриф: «НОВЫЕ
+ * зеркала баз в bases.ts легальны (П2 — только зеркала)»):
+ *  - shop.sell.ratePercent — зеркало ECONOMY_TABLE.sellRatePercent (ставка
+ *    продажи 40%); priceBus читает свою таблицу — резолв-уровень шины,
+ *    поведенческая проводка = будущий сеанс (прецедент worker.* M14.1);
+ *  - pen.sickness.chancePercent — зеркало PEN_TABLE.sickness.base 0.02/день
+ *    (2%); загон читает свою таблицу — аналогично.
  */
 import type { BasesTable } from '@/content/balance/bases';
 
@@ -35,6 +44,10 @@ export const PASSIVES_BASES_TABLE: BasesTable = {
     'worker.sickChance': 2,
     'worker.salary.mult': 100,
     'worker.limitPerObject': 1,
+    // [M14.2 · зеркала] ставка продажи (ECONOMY_TABLE.sellRatePercent) и
+    // базовый шанс заболевания животного (PEN_TABLE.sickness.base 2%/день)
+    'shop.sell.ratePercent': 40,
+    'pen.sickness.chancePercent': 2,
   },
   meta: {
     'player.xp.mult': { min: 0, round: 'none' },
@@ -44,5 +57,7 @@ export const PASSIVES_BASES_TABLE: BasesTable = {
     'worker.sickChance': { min: 0, round: 'none' },
     'worker.salary.mult': { min: 0, round: 'none' },
     'worker.limitPerObject': { min: 0, round: 'floor' },
+    'shop.sell.ratePercent': { min: 0, round: 'none' },
+    'pen.sickness.chancePercent': { min: 0, round: 'none' },
   },
 };

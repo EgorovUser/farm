@@ -89,7 +89,15 @@ import { MINE_UPGRADES } from '@/content/mine/upgrades';
 import { HELPER_CLASSES, HELPER_FEAR_DEFS, MINE_HELPERS_TABLE, HELPER_TRAIT_TYPES } from '@/content/mine/helpers';
 // [M14] контент пассивок: дерево (узлы/рёбра/эффекты) + очки (каналы/маркеры
 // «крупных» и боссовых ачивок) + кривая респека + базы домена (П2)
+// [M14.2] кластеры полного дерева ×5 сливаются в таблицу 'passives'
+// (бриф G2: «агрегация массивов в таблицу — правкой content-registration.ts»;
+// смежность = объединение рёбер, граф неориентированный — logic.ts M14.1)
 import { PASSIVES_TREE } from '@/content/passives/nodes';
+import { FARM_NODES } from '@/content/passives/nodes-farm';
+import { FISH_NODES } from '@/content/passives/nodes-fish';
+import { MINE_NODES } from '@/content/passives/nodes-mine';
+import { ECONOMY_NODES } from '@/content/passives/nodes-economy';
+import { ANIMALS_NODES } from '@/content/passives/nodes-animals';
 import { PASSIVES_POINTS } from '@/content/passives/points';
 import { PASSIVES_RESPEC } from '@/content/passives/respec';
 import { PASSIVES_BASES_TABLE } from '@/content/passives/bases';
@@ -227,8 +235,14 @@ export function registerContent(content: ContentRegistry): void {
   content.register('mine.helpers.table', mineHelpersTableSchema, MINE_HELPERS_TABLE);
   // --- контент M14 (карточка §3–§4: дерево/очки/респек — данные, П1;
   //     zod-валидация достижимости BFS — висячий узел = отказ загрузки F6;
-  //     инвариант M03 «stat → существующие базы» — домен в PASSIVES_BASES_TABLE)
-  content.register('passives', passivesTreeSchema, PASSIVES_TREE);
+  //     инвариант M03 «stat → существующие базы» — домен в PASSIVES_BASES_TABLE;
+  //     [M14.2] полное дерево 150 allocatable = 34 M14.1 + 117 новых по квотам
+  //     карточки §4: ядро 20 / ферма 30 / рыбалка 25 / шахта 30 / экономика 25
+  //     / животные 20 (+ старт-якорь вне счёта — счёт allocatable, G2/G8)
+  content.register('passives', passivesTreeSchema, {
+    startNodes: PASSIVES_TREE.startNodes,
+    nodes: [...PASSIVES_TREE.nodes, ...FARM_NODES, ...FISH_NODES, ...MINE_NODES, ...ECONOMY_NODES, ...ANIMALS_NODES],
+  });
   content.register('passives.points', passivesPointsSchema, PASSIVES_POINTS);
   content.register('passives.respec', passivesRespecSchema, PASSIVES_RESPEC);
 }

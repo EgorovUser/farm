@@ -67,9 +67,9 @@ export async function runPassivesPart1(): Promise<CheckResult[]> {
     const providerOk = f.game.statBus.providerIds().includes('passivesProvider');
     f.dispose();
     results.push(
-      check('манифест 1.0.0 = факту [01 §9]: publicApi ↔ api (×6: state/tree/alloc/refund/canReach + reset dev по прецедентам lake.force/workers.dev); eventsPublished ровно ×1 passive.allocated; eventsSubscribed ×3; modifierProviders passivesProvider зарегистрирован в StatBus; taskExecutors/statsCounters [] (реестр задач 15 жив)', () =>
+      check('манифест = факту [01 §9; M14.2 · bump 1.1.0 — «только версия», поведение 1.0.0]: publicApi ↔ api (×6: state/tree/alloc/refund/canReach + reset dev по прецедентам lake.force/workers.dev); eventsPublished ровно ×1 passive.allocated; eventsSubscribed ×3; modifierProviders passivesProvider зарегистрирован в StatBus; taskExecutors/statsCounters [] (реестр задач 15 жив)', () =>
         manifest.id === 'passives' &&
-        manifest.version === '1.0.0' &&
+        manifest.version === '1.1.0' &&
         manifest.stateKey === 'passives' &&
         same &&
         (manifest.eventsPublished ?? []).join(',') === 'passive.allocated' &&

@@ -1,0 +1,316 @@
+/**
+ * M14.2 «Дерево пассивик» — кластер БОЙ-ШАХТА (карточка §4: квота 30).
+ * Существующие 3 (mine_ore_1 «Золотая жила», mine_crit_1, ks_magnate) — НЕ
+ * переносятся; здесь 27 НОВЫХ = 24 Small + 3 Notable: 3 + 27 = 30.
+ *
+ * Ветви (система карточки «урон/HP/руда/факел»):
+ *  - УРОН: mine_dmg → atk → def + Notable «Гроза глубин» (от mine_crit_1);
+ *  - ТОЧНОСТЬ: mine_crit_2..4 → mine_spd + Notable «Хирург руды» (от
+ *    mine_crit_1);
+ *  - РУДА/ТАЙНЫ: mine_ore → sense → torch + Notable «Царь горы» (от
+ *    mine_ore_1) — факел = видимость (mine.hiddenChance/oreSense/luck.hidden);
+ *  - ПОМОЩНИКИ: mine_help_1..5 (от ks_magnate) — статы отряда M13.2.
+ *
+ * [ЗАЩИТА ДИСТАНЦИИ]: цепь core_start → e1 → e2 → e3 → core_mine_cost →
+ * mine_ore_1 → mine_crit_1 → ks_magnate (7 рёбер) — оракул чека 18 группы
+ * (canReach «7 выделений»). НОВЫЕ узлы крепятся к СПИНЕ только ОДНИМ ребром
+ * (ветви растут наружу листами) — сквозных рёбер между узлами спины НЕТ,
+ * дистанция до ks_magnate остаётся 7 (переповтор оракула — чек части 2).
+ *
+ * [DECISION op по пред-базе — канон FIX-RIVEN]: inc только на ненулевых
+ * базах; flat — на нулевых (mine.damage 0, combat.defense 0, mine.oreYield 0,
+ * mine.oreSense 0, mine.luck.hidden 0); mine.crit (база 5) и mine.speed
+ * (база 10), combat.attack (база 5), mine.hiddenChance (база 40) — flat-шаги
+ * абсолютных значений. Новых зеркал bases.ts кластер не требует.
+ */
+import type { PassiveNodeDef } from './types';
+
+/** кластер «Бой и шахта» — 27 новых узлов (квота 30 = 3 существующих + 27) */
+export const MINE_NODES: PassiveNodeDef[] = [
+  // --- ветвь УРОН (от mine_crit_1): урон и бой игрока
+  {
+    id: 'mine_dmg_1',
+    name: 'Тяжёлая кирка',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.damage', op: 'flat', value: 5, label: '+5% к урону в бою шахты' }],
+    links: ['mine_crit_1'],
+    pos: { x: 7, y: -5 },
+  },
+  {
+    id: 'mine_dmg_2',
+    name: 'Заточенное остриё',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.damage', op: 'flat', value: 5, label: '+5% к урону в бою шахты' }],
+    links: ['mine_dmg_1'],
+    pos: { x: 8, y: -5 },
+  },
+  {
+    id: 'mine_dmg_3',
+    name: 'Ярость рудокопа',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.damage', op: 'flat', value: 10, label: '+10% к урону в бою шахты' }],
+    links: ['mine_dmg_2'],
+    pos: { x: 9, y: -5 },
+  },
+  {
+    id: 'mine_atk_1',
+    name: 'Кулачный боец',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'combat.attack', op: 'flat', value: 2, label: '+2 к атаке игрока' }],
+    links: ['mine_dmg_3'],
+    pos: { x: 10, y: -5 },
+  },
+  {
+    id: 'mine_atk_2',
+    name: 'Боевая стойка',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'combat.attack', op: 'flat', value: 2, label: '+2 к атаке игрока' }],
+    links: ['mine_atk_1'],
+    pos: { x: 11, y: -5 },
+  },
+  {
+    id: 'mine_def_1',
+    name: 'Каска и щиток',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'combat.defense', op: 'flat', value: 2, label: '+2 к защите игрока' }],
+    links: ['mine_atk_2'],
+    pos: { x: 12, y: -5 },
+  },
+  {
+    id: 'mine_def_2',
+    name: 'Кольчужный подклад',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'combat.defense', op: 'flat', value: 2, label: '+2 к защите игрока' }],
+    links: ['mine_def_1'],
+    pos: { x: 13, y: -5 },
+  },
+  {
+    id: 'mine_war_n',
+    name: 'Гроза глубин',
+    kind: 'notable',
+    cluster: 'mine',
+    cost: 10,
+    mods: [
+      { stat: 'mine.damage', op: 'flat', value: 15, label: '+15% к урону в бою шахты' },
+      { stat: 'combat.attack', op: 'flat', value: 5, label: '+5 к атаке игрока' },
+    ],
+    links: ['mine_def_2'],
+    pos: { x: 14, y: -5 },
+    note: 'Notable = эффект-комбинация; цена 10 — [DECISION M142-цена]',
+  },
+  // --- ветвь ТОЧНОСТЬ (от mine_crit_1): крит и скорость бойца
+  {
+    id: 'mine_crit_2',
+    name: 'Меткий замах',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.crit', op: 'flat', value: 2, label: '+2% к шансу крита' }],
+    links: ['mine_crit_1'],
+    pos: { x: 7, y: -3 },
+  },
+  {
+    id: 'mine_crit_3',
+    name: 'Слабые места',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.crit', op: 'flat', value: 2, label: '+2% к шансу крита' }],
+    links: ['mine_crit_2'],
+    pos: { x: 8, y: -3 },
+  },
+  {
+    id: 'mine_crit_4',
+    name: 'Хладнокровие',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.crit', op: 'flat', value: 3, label: '+3% к шансу крита' }],
+    links: ['mine_crit_3'],
+    pos: { x: 9, y: -3 },
+  },
+  {
+    id: 'mine_spd_1',
+    name: 'Быстрый замах',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.speed', op: 'flat', value: 1, label: '+1 к скорости бойца' }],
+    links: ['mine_crit_4'],
+    pos: { x: 10, y: -3 },
+  },
+  {
+    id: 'mine_spd_2',
+    name: 'Отработанный ритм',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.speed', op: 'flat', value: 1, label: '+1 к скорости бойца' }],
+    links: ['mine_spd_1'],
+    pos: { x: 11, y: -3 },
+  },
+  {
+    id: 'mine_surg_n',
+    name: 'Хирург руды',
+    kind: 'notable',
+    cluster: 'mine',
+    cost: 10,
+    mods: [
+      { stat: 'mine.crit', op: 'flat', value: 5, label: '+5% к шансу крита' },
+      { stat: 'mine.speed', op: 'flat', value: 2, label: '+2 к скорости бойца' },
+    ],
+    links: ['mine_spd_2'],
+    pos: { x: 12, y: -3 },
+    note: 'Notable = эффект-комбинация; цена 10 — [DECISION M142-цена]',
+  },
+  // --- ветвь РУДА/ТАЙНЫ (от mine_ore_1): добыча и видимость (факел)
+  {
+    id: 'mine_ore_2',
+    name: 'Жильное чутьё',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.oreYield', op: 'flat', value: 10, label: '+10% к добыче руды' }],
+    links: ['mine_ore_1'],
+    pos: { x: 6, y: -6 },
+  },
+  {
+    id: 'mine_ore_3',
+    name: 'Геологический молот',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.oreYield', op: 'flat', value: 10, label: '+10% к добыче руды' }],
+    links: ['mine_ore_2'],
+    pos: { x: 7, y: -6 },
+  },
+  {
+    id: 'mine_ore_4',
+    name: 'Обогатительная чаша',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.oreYield', op: 'flat', value: 15, label: '+15% к добыче руды' }],
+    links: ['mine_ore_3'],
+    pos: { x: 8, y: -6 },
+  },
+  {
+    id: 'mine_sense_1',
+    name: 'Фонарь геолога',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.oreSense', op: 'flat', value: 5, label: '+5 к чутью на руду' }],
+    links: ['mine_ore_4'],
+    pos: { x: 9, y: -6 },
+  },
+  {
+    id: 'mine_sense_2',
+    name: 'Чутьё на тайны',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.luck.hidden', op: 'flat', value: 5, label: '+5 к удаче скрытых находок' }],
+    links: ['mine_sense_1'],
+    pos: { x: 10, y: -6 },
+  },
+  {
+    id: 'mine_torch_1',
+    name: 'Яркий факел',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.hiddenChance', op: 'flat', value: 5, label: '+5% к доле скрытых карт' }],
+    links: ['mine_sense_2'],
+    pos: { x: 11, y: -6 },
+  },
+  {
+    id: 'mine_torch_2',
+    name: 'Прожектор глубин',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.hiddenChance', op: 'flat', value: 5, label: '+5% к доле скрытых карт' }],
+    links: ['mine_torch_1'],
+    pos: { x: 12, y: -6 },
+  },
+  {
+    id: 'mine_peak_n',
+    name: 'Царь горы',
+    kind: 'notable',
+    cluster: 'mine',
+    cost: 10,
+    mods: [
+      { stat: 'mine.oreYield', op: 'flat', value: 25, label: '+25% к добыче руды' },
+      { stat: 'mine.oreSense', op: 'flat', value: 10, label: '+10 к чутью на руду' },
+    ],
+    links: ['mine_torch_2'],
+    pos: { x: 13, y: -6 },
+    note: 'Notable = эффект-комбинация; цена 10 — [DECISION M142-цена]',
+  },
+  // --- ветвь ПОМОЩНИКИ (от ks_magnate): статы отряда наёмников (M13.2)
+  {
+    id: 'mine_help_1',
+    name: 'Учения наставника',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.helper.atk', op: 'flat', value: 2, label: '+2 к атаке помощника' }],
+    links: ['ks_magnate'],
+    pos: { x: 8, y: -4 },
+  },
+  {
+    id: 'mine_help_2',
+    name: 'Доспехи наёмнику',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.helper.hp', op: 'flat', value: 10, label: '+10 к HP помощника' }],
+    links: ['mine_help_1'],
+    pos: { x: 9, y: -4 },
+  },
+  {
+    id: 'mine_help_3',
+    name: 'Слаженная смена',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.helper.speed', op: 'flat', value: 1, label: '+1 к скорости помощника' }],
+    links: ['mine_help_2'],
+    pos: { x: 10, y: -4 },
+  },
+  {
+    id: 'mine_help_4',
+    name: 'Наёмный штурм',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.helper.efficiency', op: 'flat', value: 5, label: '+5 к эффективности помощника' }],
+    links: ['mine_help_3'],
+    pos: { x: 11, y: -4 },
+  },
+  {
+    id: 'mine_help_5',
+    name: 'Золотая доля',
+    kind: 'small',
+    cluster: 'mine',
+    cost: 1,
+    mods: [{ stat: 'mine.helper.gold', op: 'flat', value: 5, label: '+5 к золоту помощника' }],
+    links: ['mine_help_4'],
+    pos: { x: 12, y: -4 },
+  },
+];
