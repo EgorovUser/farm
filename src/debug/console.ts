@@ -24,6 +24,8 @@ import { registerFishingCommands } from './commands-fishing';
 import { registerLakeCommands } from './commands-lake';
 import { registerWorkersCommands } from './commands-workers';
 import { registerMineCommands } from './commands-mine';
+// [M14] команды пассивок: очки/дерево/аллокация/респек/достижимость/dev-сброс
+import { registerPassivesCommands } from './commands-passives';
 // [REG-1] живой реестр: агрегатор рантайм-реестров (модули/шины/сервисы/
 // команды/контент) — списки расширяются сами, без ручных таблиц
 import { registerRegistryCommands } from './commands-registry';
@@ -56,6 +58,7 @@ export function getCommandRegistry(): CommandRegistry {
     registerLakeCommands(registry); // [M08] команды озера: state/release/feed/treat/clean/harvest/buy + dev pair/force (карточка §6)
     registerWorkersCommands(registry); // [M11] команды работников: workers board/list/hire/fire/bonus + dev mood set / payday force (карточка §6)
     registerMineCommands(registry); // [M12] команды шахты: state/mob/fight/elite + --seed golden (карточка §6, бриф F8)
+    registerPassivesCommands(registry); // [M14] команды пассивок: points/tree/alloc/refund/canreach/reset (бриф F7)
     registerQuestsCommands(registry); // [M15] команды квестов/ачивок (бриф §4.6: roll/list/complete/claim/reroll, ach unlock, flags list)
     registerRegistryCommands(registry); // [REG-1] живой реестр: модули M01–M15/шины/сервисы/команды/контент из рантайма
   }

@@ -87,6 +87,13 @@ import { MINE_UPGRADES } from '@/content/mine/upgrades';
 // + трейт-типы ривена (скоуп 'helper'; слияние в 'mods' — ЖИВОЙ движок C6 M03
 // роллит их по бюджету редкости, П1/П5 — паттерн трейтов работников M11)
 import { HELPER_CLASSES, HELPER_FEAR_DEFS, MINE_HELPERS_TABLE, HELPER_TRAIT_TYPES } from '@/content/mine/helpers';
+// [M14] контент пассивок: дерево (узлы/рёбра/эффекты) + очки (каналы/маркеры
+// «крупных» и боссовых ачивок) + кривая респека + базы домена (П2)
+import { PASSIVES_TREE } from '@/content/passives/nodes';
+import { PASSIVES_POINTS } from '@/content/passives/points';
+import { PASSIVES_RESPEC } from '@/content/passives/respec';
+import { PASSIVES_BASES_TABLE } from '@/content/passives/bases';
+import { passivesPointsSchema, passivesRespecSchema, passivesTreeSchema } from '@/content/passives/schemas';
 import {
   eliteModsSchema,
   mineMobsSchema,
@@ -115,7 +122,7 @@ export function registerContent(content: ContentRegistry): void {
   content.register(
     'bases',
     basesTableSchema,
-    mergeBaseTables(BASES_TABLE, PLAYER_BASES_TABLE, INVENTORY_BASES_TABLE, SHOP_BASES_TABLE, CRAFT_BASES_TABLE, FORGE_BASES_TABLE, FARM_BASES_TABLE, PEN_BASES_TABLE, FISH_BASES_TABLE, LAKE_BASES_TABLE, WORKERS_BASES_TABLE),
+    mergeBaseTables(BASES_TABLE, PLAYER_BASES_TABLE, INVENTORY_BASES_TABLE, SHOP_BASES_TABLE, CRAFT_BASES_TABLE, FORGE_BASES_TABLE, FARM_BASES_TABLE, PEN_BASES_TABLE, FISH_BASES_TABLE, LAKE_BASES_TABLE, WORKERS_BASES_TABLE, PASSIVES_BASES_TABLE),
   );
   content.register('economy', economySchema, ECONOMY_TABLE);
   content.register('time', timeSchema, TIME_TABLE);
@@ -218,4 +225,10 @@ export function registerContent(content: ContentRegistry): void {
   content.register('mine.helpers', helperClassesSchema, HELPER_CLASSES);
   content.register('mine.helpers.fears', helperFearsSchema, HELPER_FEAR_DEFS);
   content.register('mine.helpers.table', mineHelpersTableSchema, MINE_HELPERS_TABLE);
+  // --- контент M14 (карточка §3–§4: дерево/очки/респек — данные, П1;
+  //     zod-валидация достижимости BFS — висячий узел = отказ загрузки F6;
+  //     инвариант M03 «stat → существующие базы» — домен в PASSIVES_BASES_TABLE)
+  content.register('passives', passivesTreeSchema, PASSIVES_TREE);
+  content.register('passives.points', passivesPointsSchema, PASSIVES_POINTS);
+  content.register('passives.respec', passivesRespecSchema, PASSIVES_RESPEC);
 }

@@ -146,9 +146,9 @@ export async function runQuestsLiveChecks(): Promise<CheckResult[]> {
   const f12c = makeQuestsGame(cold);
   await f12c.game.init();
   results.push(
-    check('сейв v15: версия 15, срезов 19 (+mine [M12.1 · v15]); F5-раундтрип (ролл/claim/цепочка/флаги живы); холодная v3 → v15 [M08 · v13 → M11 · v14 → M12.1 · v15]', () => // [M05.1 · v10 → M06.1 · v11 → M07.1 · v12: +срезы pen/fishing]
+    check('сейв v15: версия 15, срезов 20 (+mine [M12.1 · v15] +passives [M14 · ленивый срез]); F5-раундтрип (ролл/claim/цепочка/флаги живы); холодная v3 → v15 [M08 · v13 → M11 · v14 → M12.1 · v15]', () => // [M05.1 · v10 → M06.1 · v11 → M07.1 · v12: +срезы pen/fishing]
       f12r.game.save.info().saveVersion === 15 &&
-      f12r.game.save.info().slices.length === 19 &&
+      f12r.game.save.info().slices.length === 20 &&
       f12r.game.save.info().slices.includes('quests') &&
       daily12.length === 2 && daily12.find((q) => q.id === 'qd_forge_lucky')?.claimed === true &&
       chain12 !== undefined && chain12.step === 1 && chain12.progress === 1 &&

@@ -47,6 +47,8 @@ import { runMineChecks } from './mine-checks';
 import { runMineRunChecks } from './mine-run-checks';
 // [M13.2] помощники (наёмники забегов) — доска/страхи/классы/доля/репутация
 import { runMineHelpersChecks } from './mine-helpers-checks';
+// [M14] пассивки — движок/очки/респек/валидация/старт-ядро (бриф F8)
+import { runPassivesChecks } from './passives-checks';
 // [REG-1] живой реестр: агрегатор рантайм-реестров (модули/шины/сервисы/
 // команды/контент) — списки расширяются сами (запрос спеки между M12.1 и M12.2)
 import { runRegistryChecks } from './registry-checks';
@@ -132,6 +134,10 @@ export async function runAllSelfChecks(): Promise<CheckGroup[]> {
     // --- M13 «Помощники» (сеанс M13.2 — наёмники: доска dailySeed/страхи-Condition/
     //     классы ×5/доля по вкладу/зарплата/репутация/перк 50+/Отряд/энергоконтракт)
     await runMineHelpersChecks(),
+    // --- M14 «Пассивки» (сеанс M14.1 — движок: очки ×3 канала + идемпотентный
+    //     ретро, аллокация по рёбрам, платный респек с инвариантом связности,
+    //     провайдер/событие, zod-валидация достижимости, старт-ядро контента)
+    await runPassivesChecks(),
     // --- Реестр (сеанс REG-1): живой обзор — модули M01–M15/шины/сервисы/
     //     команды/контент без ручных списков (агрегатор registry-overview)
     await runRegistryChecks(),

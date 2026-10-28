@@ -30,6 +30,7 @@ import { FishingModule } from './modules/fishing/module';
 import { LakeModule } from './modules/lake/module';
 import { WorkersModule } from './modules/workers/module';
 import { MineModule } from './modules/mine/module';
+import { PassivesModule } from './modules/passives/module';
 import { QuestsModule } from './modules/quests/module';
 import type { DeliverReceipt } from './modules/shop/purchase';
 import type { PlayerTable } from '@/content/player/progression';
@@ -692,6 +693,28 @@ export function wireGameModules(
     }),
   );
   director.activate('mine');
+
+  // --- M14 «Пассивки» (фаза 4): монтаж ПОСЛЕ mine ДО quests (бриф §0 —
+  //     ЯВНО санкционирован). Изоляция: факты сейва для ретро-подсчёта —
+  //     витрины publicApi M01/M15 через ModuleRegistry (П4: уровень —
+  //     player.ctxExtras, ачивки — quests.gateExtras; чтение, НЕ импорт);
+  //     модификаторы узлов — passivesProvider в StatBus (02 §2); очки —
+  //     подписки ×3 (player.levelUp / achievement.unlocked / mine.bossKilled
+  //     — каналы брифа §0); респек — TransactionService eventId passives.respec;
+  //     срез passives ленивый БЕЗ bump (ДВЕНАДЦАТАЯ заморозка ядра)
+  modules.register(
+    new PassivesModule({
+      playerLevel: () =>
+        Number((modules.call('player', 'player.ctxExtras') as Record<string, unknown> | null ?? {})['player:level'] ?? 0),
+      hasAchievement: (id) =>
+        Boolean(
+          (modules.call('quests', 'quests.gateExtras') as Record<string, unknown> | null ?? {})[
+            `achievement:${id}`
+          ],
+        ),
+    }),
+  );
+  director.activate('passives');
 
   // --- M15 «Квесты» (фаза 2): активируется ПОСЛЕДНИМ — подписки движка
   //     встают после CountersEngine M01 (счётчики подняты до переоценки);

@@ -214,7 +214,7 @@ export async function runWorkersChecks(): Promise<CheckGroup> {
     const manifest = f.game.modules.get('workers')?.manifest;
     const api = Object.keys(f.workers).sort();
     tail.push(
-      check('манифест M11 = факту (F16 — ОДИН bump 1.0.0 → 1.1.0): version 1.1.0; publicApi РОВНО ×8 (board/list/hire/fire/bonus + upgrades/last + dev); eventsPublished РОВНО ×5 = [worker.hired, worker.fired, worker.sick, worker.payday, worker.actionDone] (каталог 02 §4 — строка с фазы 0, каталог НЕ редактировался); eventsSubscribed [time.dayTick, time.hourTick] (worker.tick — M11.2); modifierProviders [worker.traits]; taskExecutors ПУСТЫ (работник ВЫЗЫВАЕТ чужих исполнителей — сам НЕ регистрирует); save info: версия 15 (bump M12.1 — срез mine), срезов 19 (+workers +mine)', () =>
+      check('манифест M11 = факту (F16 — ОДИН bump 1.0.0 → 1.1.0): version 1.1.0; publicApi РОВНО ×8 (board/list/hire/fire/bonus + upgrades/last + dev); eventsPublished РОВНО ×5 = [worker.hired, worker.fired, worker.sick, worker.payday, worker.actionDone] (каталог 02 §4 — строка с фазы 0, каталог НЕ редактировался); eventsSubscribed [time.dayTick, time.hourTick] (worker.tick — M11.2); modifierProviders [worker.traits]; taskExecutors ПУСТЫ (работник ВЫЗЫВАЕТ чужих исполнителей — сам НЕ регистрирует); save info: версия 15 (bump M12.1 — срез mine), срезов 20 (+workers +mine +passives [M14 · ленивый срез])', () =>
         manifest !== undefined &&
         manifest.version === '1.1.0' &&
         JSON.stringify([...(manifest.publicApi ?? [])].sort()) === JSON.stringify(['workers.board', 'workers.bonus', 'workers.dev', 'workers.fire', 'workers.hire', 'workers.last', 'workers.list', 'workers.upgrades']) &&
@@ -226,8 +226,8 @@ export async function runWorkersChecks(): Promise<CheckGroup> {
         JSON.stringify(manifest.modifierProviders) === JSON.stringify(['worker.traits']) &&
         (manifest.taskExecutors ?? []).length === 0 &&
         api.length === 8 &&
-        info.saveVersion === 15 && info.slices.length === 19 && info.slices.includes('workers'), {
-        expected: '1.1.0; api ×8; события ×5 ровно; подписки ×2; провайдер [worker.traits]; v15/19 срезов',
+        info.saveVersion === 15 && info.slices.length === 20 && info.slices.includes('workers') && info.slices.includes('passives'), {
+        expected: '1.1.0; api ×8; события ×5 ровно; подписки ×2; провайдер [worker.traits]; v15/20 срезов',
         actual: `v${manifest?.version}; api ${api.length}; события ${(manifest?.eventsPublished ?? []).length}; срезов ${info.slices.length}; версия ${info.saveVersion}`,
       }),
     );
