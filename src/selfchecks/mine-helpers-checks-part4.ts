@@ -6,6 +6,7 @@
  */
 import { check, type CheckResult } from './types';
 import {
+  makeSeededRunGame,
   makeSeededSliceGame,
   seededMineSlice,
   mobCard,
@@ -199,6 +200,59 @@ export async function runMineHelpersPart4(): Promise<CheckResult[]> {
     );
     f.dispose();
     g.dispose();
+  }
+
+  // 17. [FIX-M13 · P3] витринные правки аудита: OBS-7 (суффикс «отряд полон (кап)»
+  //     по ЗАНЯТОСТИ слотов, а не по покупкам «Отряда»), OBS-6 (HP при найме =
+  //     max с первого дня — max вычисляется ПОСЛЕ попадания экземпляра в срез,
+  //     пер-instance трейт-провайдер видит найм), OBS-8 (ведомость расчёта при
+  //     завершении СМЕРТЬЮ доступна витриной «последний расчёт» в mine helpers)
+  {
+    const f = await makeSeededRunGame('m132-gold-0');
+    grantGold(f, 5000);
+    f.mine['mine.upgrades.buy']('mine_barracks');
+    f.mine['mine.upgrades.buy']('mine_squad');
+    f.mine['mine.upgrades.buy']('mine_squad'); // слоты 3/3 — КАП покупок «Отряда»
+    const board0 = boardText(f.mine['mine.helpers']());
+    // OBS-6: Кувалда (hpr_20240101_0) — трейт «Крепкий» +N к HP: наём даёт
+    // HP = max СРАЗУ (ранее «40/50» до первого settle — AUDIT-M13-OBS-6)
+    const hire = f.mine['mine.helpers.hire'](1) as R<ViewShape>;
+    const roster1 = boardText(f.mine['mine.helpers']());
+    const hpMatch = /HP (\d+)\/(\d+)/.exec(roster1);
+    const hpOk = hpMatch !== null && hpMatch[1] === hpMatch[2];
+    // OBS-7: 1/3 при капе покупок — БЕЗ суффикса «полон» (слоты свободны)
+    const line1 = roster1.split('\n').find((l) => l.startsWith('отряд:'));
+    f.mine['mine.helpers.fire'](1);
+    const roster0 = boardText(f.mine['mine.helpers']());
+    const line0 = roster0.split('\n').find((l) => l.startsWith('отряд:'));
+    // тройной найм → 3/3 — «отряд полон (кап)» по ЗАНЯТОСТИ
+    f.mine['mine.helpers.hire'](1);
+    f.mine['mine.helpers.hire'](2);
+    f.mine['mine.helpers.hire'](3);
+    const roster3 = boardText(f.mine['mine.helpers']());
+    const line3 = roster3.split('\n').find((l) => l.startsWith('отряд:'));
+    // OBS-8: смерть с помощниками → ведомость доступна витриной
+    equipPickaxe(f, 'D');
+    f.mine['mine.enter'](1);
+    (f.player['player.setHp'] as (n: number) => unknown)(0); // смерть → расчёт
+    const ended = eventsOf(f, 'mine.runEnded');
+    const boardAfterDeath = boardText(f.mine['mine.helpers']());
+    results.push(
+      check('витринные правки [FIX-M13 · P3 / DECISION FIX13-3]: OBS-7 — суффикс «— отряд полон (кап)» по ЗАНЯТОСТИ слотов (N/M), а не по факту покупок «Отряда»: кап покупок (2/2) при свободных слотах — честная строка «кап покупок „Отряда“: слоты свободны N/M», «1/3 слотов» БЕЗ «полон», «3/3 слотов — отряд полон (кап)»; OBS-6 — наём с позитивным hp-трейтом («Крепкий» +N) даёт HP = max С ПЕРВОГО ДНЯ (max вычисляется ПОСЛЕ попадания экземпляра в срез — пер-instance провайдер видит найм; hp ≤ max — инвариант); OBS-8 — ведомость расчёта при завершении СМЕРТЬЮ доступна витриной «последний расчёт» в mine helpers (канал вывода у подписки player.hpChanged отсутствует; транзакции/события живут — runEnded death)', () =>
+        board0.includes('отряд: 0/3 слотов — кап покупок «Отряда»: слоты свободны 3/3') &&
+        hire.ok && hpOk && Number(hpMatch?.[1] ?? 0) > 40 &&
+        line1 !== undefined && line1.startsWith('отряд: 1/3 слотов') && !line1.includes('полон') &&
+        line0 !== undefined && line0.startsWith('отряд: 0/3 слотов') && !line0.includes('полон') &&
+        line3 !== undefined && line3.includes('отряд: 3/3 слотов — отряд полон (кап)') &&
+        ended.length === 1 && ended[0]!.reason === 'death' &&
+        boardAfterDeath.includes('последний расчёт (забег завершён смертью') &&
+        boardAfterDeath.includes('зарплата') &&
+        boardAfterDeath.includes('без роста (забег завершён смертью)'), {
+        expected: '0/3 без «полон»; 1/3 без «полон»; 3/3 «полон (кап)»; наём HP=max (>40); смерть → ведомость витриной',
+        actual: `0/3=${board0.includes('кап покупок') && !board0.includes('полон') ? 'ок' : '?'}; HP=${hpMatch ? `${hpMatch[1]}/${hpMatch[2]}` : '?'}; 1/3=${line1 !== undefined && !line1.includes('полон') ? 'без полон' : 'ДЕФЕКТ'}; 3/3=${line3?.includes('полон (кап)') ? 'полон (кап)' : '?'}; смерть=${String(ended[0]?.reason ?? '—')}; ведомость=${boardAfterDeath.includes('последний расчёт') ? 'доступна' : 'НЕТ'}`,
+      }),
+    );
+    f.dispose();
   }
 
   return results;

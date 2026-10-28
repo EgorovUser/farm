@@ -5,6 +5,9 @@
  *   mine pick p<N>   — выпить зелье №N из витрины (BUF-1: kernel.buff);
  *   режим крота      — покупка стока (mine pick <i>) / уход (mine pick 0);
  *   режим обвала     — какую карту следующей колонки засыпать.
+ * [FIX-M13 · P1 / DECISION FIX13-1]: свиток (0) и зелья (p<N>) доступны
+ * ВСЕГДА — режим обвала их НЕ перехватывает (неприкосновенность выхода);
+ * цели засыпания не включают карту-босса («босса уничтожить нельзя»).
  * Разрешение публикует mine.cardResolved {kind, cardId, column, исход, лут?}
  * и двигает колонку. Смерть внутри карты — подписка M13.1 (забег уже завершён:
  * колонка не двигается, витрина честна).
@@ -145,21 +148,42 @@ function drinkPotion(x: RunCtx, run: MineRunState, n: number): Result<CardResolu
   return ok({ header: 'Зелье', lines });
 }
 
+/** [FIX-M13 · P1 / DECISION FIX13-1] цели засыпания обвала: карты следующей
+ *  колонки — той, куда игрока сдвинула разрешённая карта обвала (колонка
+ *  разрешения N (пре-сдвиговая) → следующая N+1 = текущая пост-сдвиговая),
+ *  БЕЗ карты-босса: ЦЕЛЬ финала слоя неприкосновенна («босса уничтожить
+ *  нельзя» — буквальный [DECISION R3-коллапс M13.1]); переходы 3→4→5
+ *  защищены по ЦЕЛИ, не по колонке разрешения */
+function collapseTargets(run: MineRunState): RunCard[] {
+  const from = (run.column - 1) * CARDS_PER_COLUMN;
+  const to = run.column >= 5 ? run.cards.length : from + CARDS_PER_COLUMN;
+  return run.cards.slice(from, to).filter((c) => c.kind !== 'boss' && c.destroyed !== true);
+}
+
 /** обвал: какую карту следующей колонки засыпать (выбор из оставшихся 2) */
 function collapsePick(x: RunCtx, run: MineRunState, index: number): Result<CardResolution> {
-  if (run.column >= 5) return err('следующей колонки нет — обвал уже отыгран');
-  const from = run.column * CARDS_PER_COLUMN;
-  const next = run.cards.slice(from, from + CARDS_PER_COLUMN);
-  const card = next[index - 1];
-  if (card === undefined || card.destroyed === true) {
-    return err(`нет карты №${index} в следующей колонке (1..3)`);
+  const targets = collapseTargets(run);
+  if (targets.length === 0) {
+    // [FIX-M13 · P1] засыпать нечего (следующей колонки нет / в колонке только
+    // босс) — обвал закрывается честной витриной БЕЗ лока и без вечного
+    // перехвата входов (в т.ч. спасает забеги, запертые старым кодом)
+    run.pendingCollapse = false;
+    x.markDirty();
+    return ok({
+      header: 'Обвал — отыгран',
+      lines: ['обвал отыгран — засыпать нечего: босса уничтожить нельзя (проходите дальше; свиток 0 и зелья p<N> доступны)'],
+    });
+  }
+  const card = targets[index - 1];
+  if (card === undefined) {
+    return err(`нет карты №${index} в следующей колонке (1..${targets.length})`);
   }
   card.destroyed = true;
   run.pendingCollapse = false;
   x.markDirty();
   return ok({
     header: 'Обвал — карта засыпана',
-    lines: [`карта ${index} колонки ${run.column + 1} уничтожена — на развилке останется выбор из оставшихся 2`],
+    lines: [`карта ${index} колонки ${run.column} уничтожена — на развилке останется выбор из оставшихся 2`],
   });
 }
 
@@ -183,14 +207,9 @@ export function pickCard(x: RunCtx, argRaw: string): Result<CardResolution> {
     }
     return traderBuy(x, run, i);
   }
-  // режим обвала: выбор карты к утрате
-  if (run.pendingCollapse) {
-    const i = Number(argRaw);
-    if (!Number.isInteger(i) || i < 1 || i > 3) {
-      return err('обвал требует выбора: mine pick <1..3> — какую карту следующей колонки засыпать');
-    }
-    return collapsePick(x, run, i);
-  }
+  // [FIX-M13 · P1 / DECISION FIX13-1(б)] НЕПРИКОСНОВЕННОСТЬ ВЫХОДА: свиток
+  // выхода и зелья доступны ВСЕГДА — режим обвала их НЕ перехватывает
+  // (ранее перехват обвала стоял ДО свитка/зелий → вечный забег)
   // свиток выхода
   if (argRaw === '0') {
     return applyScroll(x, run);
@@ -200,6 +219,14 @@ export function pickCard(x: RunCtx, argRaw: string): Result<CardResolution> {
     const n = Number(argRaw.slice(1));
     if (!Number.isInteger(n) || n < 1) return err('формат зелья: mine pick p<N> (список — витрина mine run)');
     return drinkPotion(x, run, n);
+  }
+  // режим обвала: обычная карта требует выбора засыпания (свиток/зелья выше)
+  if (run.pendingCollapse) {
+    const i = Number(argRaw);
+    if (!Number.isInteger(i) || i < 1) {
+      return err('обвал требует выбора: mine pick <1..3> — какую карту следующей колонки засыпать (свиток 0 и зелья p<N> доступны)');
+    }
+    return collapsePick(x, run, i);
   }
   // карта текущей колонки
   const i = Number(argRaw);

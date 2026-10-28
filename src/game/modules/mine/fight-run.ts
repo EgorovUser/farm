@@ -5,6 +5,9 @@
  * M12 (battles.ts): ЛУТ → runBag (НЕ в инвентарь), золото — сразу в кошелёк
  * (eventId mine.lootRun), смерть — подписка M13.1 (deaths+cozy+конец 'death'
  * — обёртка НЕ дублирует). A+ босса — тиром A в runBag (общая выдача R4).
+ * [FIX-M13 · P2] трофей босса — ГЕЙТ-ПРЕДМЕТ: грант транзакции в обход D23
+ * (DECISION FIX13-2; был в runBag → терялся по вместимости → ачивка-гейт
+ * слоя не открывался — AUDIT-M13-MISS-2).
  *
  * [M13.2 · R4] ПОМОЩНИКИ — дополнительные участники ОБЁРТКИ: инициатива по
  * speed (наша сторона = игрок + активные помощники; равенство → наша),
@@ -258,18 +261,28 @@ export function runBossFight(
     });
     if (x.getState().run !== undefined) {
       const ro = collectOre(x, run, layerDef, ore, 1);
-      collectToBag(x, run, layerDef.trophy, 1, { tier: 'D', value: 0 });
       collectToBag(x, run, aPlus, 1, { tier: 'A', value: 0 });
       run.mobGold += gold; // база долей R5 (только золото мобов/боссов)
+      // [FIX-M13 · P2 / DECISION FIX13-2] трофей — ГЕЙТ-ПРЕДМЕТ (контракт
+      // награды босса M12 §4, НЕ лут): грант-канал транзакции (ItemPort,
+      // enforceCapacity:false — тот же канал, что песочница M12.2) БЕЗ
+      // D23-пробы — в обход вместимости; item.acquired → auto-claim M15
+      // открывает ach_mine_boss_N (hasItem) по факту первой победы.
+      // A+-предмет и руда — ЛУТ в runBag: «гарантированный» M12 §4 =
+      // гарантия ДРОПА, не вместимости — утраты по D23 честны поимённо
       const t = x.transaction.transact({
-        grants: [{ t: 'currency', id: 'gold', qty: gold }],
+        grants: [
+          { t: 'currency', id: 'gold', qty: gold },
+          { t: 'item', defId: layerDef.trophy, qty: 1 },
+        ],
         eventId: 'mine.lootRun',
-        reason: `босс забега: ${boss.name} (слой ${layerDef.layer})`,
+        reason: `босс забега: ${boss.name} (слой ${layerDef.layer}) — трофей-гейт в обход вместимости`,
       });
       lines.push(
         `${gold}з → кошелёк${bonusPct > 0 ? ` (бонус помощников +${bonusPct}%)` : ''}${t.ok ? '' : ' (отказ транзакции!)'}`,
       );
-      lines.push(`${layerDef.ore.defId} ×${ro.qty} + трофей ${layerDef.trophy} + ${aPlus} (тир A) → runBag`);
+      lines.push(`${layerDef.ore.defId} ×${ro.qty} + ${aPlus} (тир A) → runBag (лут: утраты по вместимости честны поимённо, D23)`);
+      lines.push(`трофей ${layerDef.trophy} — гейт-предмет: выдан в обход вместимости (ачивка ach_mine_boss_${layerDef.layer} — по факту победы; M12 §4)`);
       const wear = wearPickaxe();
       if (wear !== null) lines.push(wear);
     }

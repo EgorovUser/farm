@@ -89,7 +89,8 @@ export function buildRunView(x: RunCtx): RunView {
     lines.push(`золото мобов забега: ${run.mobGold}з (база доли ${x.helpersTable.sharePoolPercent}% по вкладу · вклад игрока ${run.contrib['player'] ?? 0})`);
   }
   // режимы
-  if (run.pendingCollapse) lines.push('РЕЖИМ ОБВАЛА: mine pick <1..3> — какую карту следующей колонки засыпать');
+  // [FIX-M13 · P1] витрина режима честна: свиток/зелья доступны всегда
+  if (run.pendingCollapse) lines.push('РЕЖИМ ОБВАЛА: mine pick <1..3> — какую карту следующей колонки засыпать (свиток mine pick 0 и зелья p<N> доступны всегда; босс не засыпается)');
   if (run.traderOpen) {
     const stock = traderStockView(x, run);
     lines.push(`РЕЖИМ КРОТА: ${stock.map((s, i) => `${i + 1}: ${s.defId} ×${s.qty} — ${s.price}з`).join(' | ')} · 0: уйти`);

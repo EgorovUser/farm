@@ -269,5 +269,13 @@ export function onHpChanged(x: RunCtx, payload: unknown): void {
   const stats = { ...state.stats, deaths: state.stats.deaths + 1 };
   x.setState({ ...state, stats });
   x.deps.healHp(1, 'mine.run:cozy');
-  endRun(x, 'death'); // витрина утрат — поимённо в событии mine.runEnded (lost)
+  const ended = endRun(x, 'death'); // витрина утрат — поимённо в событии mine.runEnded (lost)
+  // [FIX-M13 · OBS-8] ведомость расчёта при завершении СМЕРТЬЮ — витрина
+  // «последний расчёт» в mine helpers: у подписки player.hpChanged нет
+  // канала вывода (аудит: «транзакции/события живут» — они без изменений);
+  // при exit/boss ведомость печатает разрешение карты как раньше
+  if (ended.ok && ended.value.helperLines.length > 0) {
+    x.setState({ ...x.getState(), lastDeathSettle: ended.value.helperLines });
+    x.markDirty();
+  }
 }

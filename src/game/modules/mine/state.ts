@@ -129,6 +129,10 @@ export interface MineState {
   lastRunDay?: string;
   /** [M13.2] наёмники забегов (лениво-опционально, БЕЗ bump; ≠ workers M11) */
   helpers?: HelperInstanceState[];
+  /** [FIX-M13 · OBS-8] ведомость расчёта последнего забега, завершённого
+   *  СМЕРТЬЮ (витрина «последний расчёт» в mine helpers — у подписки
+   *  player.hpChanged нет канала вывода); лениво-опционально БЕЗ bump */
+  lastDeathSettle?: string[];
 }
 
 export function defaultMineState(): MineState {
@@ -271,6 +275,11 @@ export function canonicalMineState(s: MineState): MineState {
   if (typeof s.lastRunDay === 'string' && s.lastRunDay.length > 0) out.lastRunDay = s.lastRunDay;
   const helpers = canonicalHelpers(s.helpers);
   if (helpers.length > 0) out.helpers = helpers;
+  // [FIX-M13 · OBS-8] ведомость смерти — канонизация: только непустые строки
+  if (Array.isArray(s.lastDeathSettle)) {
+    const ls = s.lastDeathSettle.filter((l) => typeof l === 'string' && l.length > 0);
+    if (ls.length > 0) out.lastDeathSettle = ls;
+  }
   return out;
 }
 

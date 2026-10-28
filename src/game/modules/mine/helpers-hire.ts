@@ -184,8 +184,31 @@ export function helpersBoardView(d: HelpersDeps): HelpersView {
   const board = d.boardOf(today);
   const lines: string[] = [`доска наёмников на ${today} · кандидатов ${board.length} (смена в полночь; dailySeed)`];
   board.forEach((p, i) => lines.push(...hireCardLines(p, i + 1)));
-  lines.push(`отряд: ${hired}/${slots} слотов${slots < d.table.slotCap ? ' («Отряд» расширяет — mine upgrades.buy mine_squad)' : ' — отряд полон (кап)'}`);
+  // [FIX-M13 · OBS-7] суффикс «отряд полон (кап)» — по ЗАНЯТОСТИ слотов (N/M),
+  // а не по факту покупок «Отряда»: при капе покупок и свободных слотах —
+  // честная строка (аудит: «отряд: 1/3 слотов — отряд полон (кап)» при
+  // свободных слотах — полон только при hired >= slots)
+  let squadLine = `отряд: ${hired}/${slots} слотов`;
+  if (hired >= slots) {
+    squadLine +=
+      slots >= d.table.slotCap
+        ? ' — отряд полон (кап)'
+        : ' — отряд полон («Отряд» расширяет — mine upgrades.buy mine_squad)';
+  } else if (slots >= d.table.slotCap) {
+    squadLine += ` — кап покупок «Отряда»: слоты свободны ${slots - hired}/${slots}`;
+  } else {
+    squadLine += ' («Отряд» расширяет — mine upgrades.buy mine_squad)';
+  }
+  lines.push(squadLine);
   lines.push(...rosterLines(d));
+  // [FIX-M13 · OBS-8] витрина «последний расчёт»: ведомость забега,
+  // завершённого СМЕРТЬЮ (канал вывода у подписки player.hpChanged
+  // отсутствует; транзакции/события/репутация — без изменений)
+  const lastSettle = state.lastDeathSettle;
+  if (lastSettle !== undefined && lastSettle.length > 0) {
+    lines.push('последний расчёт (забег завершён смертью — ведомость доступна здесь):');
+    lines.push(...lastSettle.map((l) => `  ${l}`));
+  }
   if (hired >= slots) lines.push('наём невозможен: отряд полон (увольте или купите «Отряд») — honest gate');
   return { header: 'Доска наёмников (mine.helpers)', lines };
 }
@@ -224,14 +247,19 @@ export function hireHelper(d: HelpersDeps, indexRaw: unknown): Result<HelpersVie
   // же кандидата после увольнения = НОВЫЙ контракт: репутация с 0 [DECISION])
   const instanceId = `hi_${d.now().toString(36)}_${i}`;
   const today = d.today();
+  // [FIX-M13 · OBS-6] экземпляр сначала попадает в срез (hp := 1 временно),
+  // max вычисляется ПОСЛЕ — per-instance трейт-провайдер (runBuffProvider,
+  // тег helper:<id>) видит найм с первого дня: позитивный hp-трейт даёт
+  // HP max/max сразу, НЕ «69/71» до первого settle (hp ≤ max — инвариант)
   const instance: HelperInstanceState = {
     instanceId,
     defId: profile.defId,
-    hp: helperMaxHp(d, profile, instanceId),
+    hp: 1,
     reputation: 0,
     hiredDay: today,
   };
   d.setState({ ...state, helpers: [...helpers, instance] });
+  instance.hp = helperMaxHp(d, profile, instanceId);
   d.markDirty();
   d.bus.publish('helper.hired', {
     defId: profile.defId,
