@@ -45,15 +45,20 @@ export const VILLAGE_TABLE: VillageTable = {
 /** БАЗЫ домена (П2, сливаются в 'bases' — content-registration; паттерн
  *  PASSIVES_BASES_TABLE M14.1): налог — зеркало VILLAGE_TAX.baseGold
  *  (прецедент M14.2 зеркал), уровень деревни — 1 (провайдер даёт override
- *  фактическим уровнем). */
+ *  фактическим уровнем). [M16.2] Кузница/Рынок — базы 0: провайдер даёт
+ *  override силой эффекта построенного уровня (класс village.level). */
 export const VILLAGE_BASES_TABLE: VillageBasesTable = {
   bases: {
     'village.tax.gold': VILLAGE_TAX.baseGold,
     'village.level': 1,
+    'village.repair.discountPercent': 0,
+    'village.market.discountPercent': 0,
   },
   meta: {
     'village.tax.gold': { min: 0, round: 'round' },
     'village.level': { min: 1, round: 'floor' },
+    'village.repair.discountPercent': { min: 0, round: 'floor' },
+    'village.market.discountPercent': { min: 0, round: 'floor' },
   },
 };
 

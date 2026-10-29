@@ -110,11 +110,15 @@ import { VILLAGE_TAX } from '@/content/village/tax';
 import { VILLAGE_GIFTS } from '@/content/village/gifts';
 import { VILLAGE_HELP } from '@/content/village/help';
 import { VILLAGE_BASES_TABLE, VILLAGE_TABLE } from '@/content/village/table';
+import { VILLAGE_BUILDINGS } from '@/content/village/buildings';
+import { VILLAGE_RAID } from '@/content/village/raid';
 import {
   villageBasesSchema,
+  villageBuildingsSchema,
   villageGiftsSchema,
   villageHelpSchema,
   villageNeedsSchema,
+  villageRaidSchema,
   villageTableSchema,
   villageTaxSchema,
   villagersSchema,
@@ -271,6 +275,11 @@ export function registerContent(content: ContentRegistry): void {
   content.register('village.gifts', villageGiftsSchema, VILLAGE_GIFTS);
   content.register('village.help', villageHelpSchema, VILLAGE_HELP);
   content.register('village', villageTableSchema, VILLAGE_TABLE);
-  // базы домена: слияние 'bases' (П2; прецедент PASSIVES_BASES_TABLE M14.1)
+  // базы домена: слияние 'bases' (П2; прецедент PASSIVES_BASES_TABLE M14.1;
+  // [M16.2] +Кузница/Рынок — базы 0, значения даёт villageProvider override'ом)
   content.register('village.bases', villageBasesSchema, VILLAGE_BASES_TABLE);
+  // --- [M16.2] здания и рейды (карточка §3–§4; DECISION M162-здания/рейд):
+  //     9 зданий × уровни 1–3 (цены/часы/эффекты) + расписание/порог/капа
+  content.register('village.buildings', villageBuildingsSchema, VILLAGE_BUILDINGS);
+  content.register('village.raid', villageRaidSchema, VILLAGE_RAID);
 }

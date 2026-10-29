@@ -1,23 +1,21 @@
 /**
- * VillageModule (M16.1) — гейт + жители/потребности/счастье/налоги/
- * подарки/помощь (карточка M16 §2–§3; брифы G1–G8). Изоляция (01 §5–§7):
- * модуль НЕ импортирует чужие модули — все каналы колбэками app-слоя
- * (deps.ts, паттерн PassivesModule/MineModule).
+ * VillageModule (M16) — Деревня. M16.1: гейт + жители/потребности/
+ * счастье/налоги/подарки/помощь. M16.2 (карточка §3–§4): здания (9 ×
+ * уровни 1–3, транзакция village.build + таймеры часов реального
+ * времени), снаряжение жителей (village.equip, снапшот качества/заточки),
+ * рейды (еженедельная ночь, предвестник ровно за 24 ч, расчёт защиты vs
+ * порог, кража ≤ 20% склада, village.raidLoss) + события raid-пары.
  *
- * Жизненный цикл (G1): ДО гейта срез не инициализируется (post-wipe
- * тишина — save() → undefined); гейт — Requirement из данных (уровень 30 +
- * флаг ачивки «Мастер хутора»); ПОСЛЕ — ленивая материализация: стартовые
- * жители + ролл их потребностей на сегодня (БЕЗ налога — первый сбор на
- * следующем дневном проходе). День-пас идемпотентен маркерами need.day:
- * повторный dayTick/catchUp того же дня налог НЕ задваивает (G1/G6).
- *
- * Налог (G6): resolve('village.tax.gold') ЧЕРЕЗ ШИНУ (моды провайдера),
- * начисление — TransactionService eventId 'village.tax', событие
- * village.taxCollected (ровно ×1 — каталог 02 §4, строка Task 84).
- * Помощь (G8): village-helper — runTask СУЩЕСТВУЮЩИХ типов (help.ts).
+ * Изоляция (01 §5–§7): модуль НЕ импортирует чужие модули — все каналы
+ * колбэками app-слоя (deps.ts). Подписки времени: dayTick (налог/ролл/
+ * ворчание) + hourTick (таймеры построек, окно рейда; catchUp публикует
+ * те же границы — идемпотентность маркерами construction/need.day/
+ * raid.week/lastResult.week).
  */
 import type { GameModule, ModuleContext } from '@/game/module-registry';
 import type {
+  VillageBuildingDef,
+  VillageRaidTable,
   VillagerDef,
   VillageGiftsTable,
   VillageHelpTable,
@@ -27,7 +25,7 @@ import type {
 } from '@/content/village/types';
 import { checkCondition } from '@/shared/utils/condition-check';
 import { createVillageManifest } from './manifest';
-import { defaultVillageState, villageSaveSlice, type VillageState } from './state';
+import { defaultVillageState, villageSaveSlice, type VillageEquipState, type VillageState } from './state';
 import {
   dayPass,
   giftEntryByRoll,
@@ -37,16 +35,44 @@ import {
 } from './logic';
 import { makeVillageProvider, VILLAGE_PROVIDER_ID } from './provider';
 import { buildNeedsView, buildVillageStateView } from './view';
+import { buildRaidView, buildBuildingsView } from './view-m162';
 import { runVillageHelp, type HelpReceipt } from './help';
 import type { VillageModuleDeps } from './deps';
 import type { Result } from '@/shared/types/result';
 import { err, ok } from '@/shared/types/result';
 import type { CurrencyId } from '@/shared/types/ids';
+import { QUALITY_TIERS } from '@/shared/types/ids';
+import type { QualityTier } from '@/shared/types/ids';
+import {
+  applyBuildStart,
+  buildingDefenseOf,
+  buildingLevelOf,
+  completeConstructions,
+  happinessAuraOf,
+  houseBonusOf,
+  planBuild,
+  warehouseProtectionOf,
+  type BuildPlan,
+  type CompletedBuild,
+} from './buildings';
+import {
+  nextRaidAfter,
+  raidAtOfWeek,
+  raidDefenseOf,
+  raidWeekKeyOf,
+  raidWindowAction,
+  resolveRaidOutcome,
+  warningAtOf,
+  type RaidOutcome,
+} from './raid';
 
 export interface SupplyReceipt {
   header: string;
   lines: string[];
 }
+
+const GATE_MSG = 'деревня заперта: уровень 30 + ачивка «Мастер хутора» (village state)';
+const MS_HOUR = 3_600_000;
 
 export class VillageModule implements GameModule {
   readonly manifest = createVillageManifest();
@@ -59,6 +85,8 @@ export class VillageModule implements GameModule {
   private taxTable: VillageTaxTable | null = null;
   private gifts: VillageGiftsTable | null = null;
   private helpTable: VillageHelpTable | null = null;
+  private buildingDefs: VillageBuildingDef[] = [];
+  private raidTable: VillageRaidTable | null = null;
   private markDirty: () => void = () => {};
   private bus: ModuleContext['bus'] | null = null;
   private transaction: ModuleContext['transaction'] | null = null;
@@ -81,6 +109,8 @@ export class VillageModule implements GameModule {
     this.taxTable = content.get<VillageTaxTable>('village.tax');
     this.gifts = content.get<VillageGiftsTable>('village.gifts');
     this.helpTable = content.get<VillageHelpTable>('village.help');
+    this.buildingDefs = content.get<VillageBuildingDef[]>('village.buildings');
+    this.raidTable = content.get<VillageRaidTable>('village.raid');
     this.bus = bus;
     this.transaction = transaction;
     this.statBus = statBus;
@@ -90,21 +120,29 @@ export class VillageModule implements GameModule {
     this.tasksRef = tasks;
     this.markDirty = () => save.markDirty();
 
-    save.registerSlice('village', villageSaveSlice(() => this.state, (s) => { this.state = s; }, this.defs));
-
-    statBus.registerProvider(
-      makeVillageProvider(() => this.state, this.defs, this.table!, this.taxTable!),
+    save.registerSlice(
+      'village',
+      villageSaveSlice(() => this.state, (s) => { this.state = s; }, this.defs, this.buildingDefs),
     );
 
-    // подписка манифеста: time.dayTick (налог/ролл потребностей/ворчание;
-    // catchUp публикует те же границы — идемпотентность маркерами need.day)
+    statBus.registerProvider(
+      makeVillageProvider(() => this.state, this.defs, this.table!, this.taxTable!, this.buildingDefs),
+    );
+
+    // подписки манифеста: time-события (dayTick жив M16.1 + hourTick M16.2:
+    // таймеры построек и окно рейда; catchUp публикует те же границы)
     const offDay = bus.subscribe('time.dayTick', (p) => {
       const payload = p as { dateISO?: string; now?: number };
       const now = typeof payload?.now === 'number' ? payload.now : time.now();
       this.onDayTick(typeof payload?.dateISO === 'string' ? payload.dateISO : time.localDateISO(now));
     });
+    const offHour = bus.subscribe('time.hourTick', (p) => {
+      const payload = p as { now?: number };
+      this.onHourTick(typeof payload?.now === 'number' ? payload.now : time.now());
+    });
     this.detachBus = () => {
       offDay();
+      offHour();
       statBus.unregisterProvider(VILLAGE_PROVIDER_ID);
     };
 
@@ -114,9 +152,16 @@ export class VillageModule implements GameModule {
       'village.supply': (id: unknown, item: unknown, qty?: unknown): Result<SupplyReceipt> =>
         this.supply(id === undefined ? '' : String(id), item === undefined ? '' : String(item), qty === undefined ? undefined : Number(qty)),
       'village.help': (): Result<HelpReceipt> => this.help(),
-      // dev (бриф §0: форс дня деревни — переролль потребностей + сбор налога;
-      // помечен dev, прецеденты lake.force/passives.reset — условия НЕ проверяются)
+      // dev (форс дня — прецедент lake.force/passives.reset; условия НЕ проверяются)
       'village.force': (): SupplyReceipt => this.forceDay(),
+      // --- M16.2
+      'village.build': (id: unknown): Result<SupplyReceipt> | unknown =>
+        id === undefined || id === '' ? this.buildingsView() : this.build(String(id)),
+      'village.equip': (id: unknown, item: unknown): Result<SupplyReceipt> =>
+        this.equip(id === undefined ? '' : String(id), item === undefined ? '' : String(item)),
+      'village.raid': () => this.raidView(),
+      // dev: форс окна рейда «предвестник → ночь» по стадиям (см. forceRaid)
+      'village.raid.force': (): Result<SupplyReceipt> => this.forceRaid(),
     };
   }
 
@@ -131,8 +176,6 @@ export class VillageModule implements GameModule {
 
   // ------------------------------------------------------------ гейт и день
 
-  /** ConditionCtx гейтов (гейт модуля + unlock-гейты жителей): stat —
-   *  StatBus провайдера (village.level — override), остальное — deps */
   private gateCtx() {
     return {
       tags: [] as string[],
@@ -149,19 +192,47 @@ export class VillageModule implements GameModule {
     return checkCondition(this.table!.gate, this.gateCtx());
   }
 
-  private unlockPass = (def: VillagerDef): boolean =>
-    def.unlock === undefined || checkCondition(def.unlock, this.gateCtx());
+  /** unlock-гейт жителя: уровень деревни + [M16.2 · DECISION M162-дом]
+   *  скидка Дома («следующий из 12 доступен уровнем ниже» за каждый уровень) */
+  private unlockPass = (def: VillagerDef): boolean => {
+    if (def.unlock === undefined) return true;
+    const c = def.unlock;
+    if (c.t === 'statAtLeast' && c.stat === 'village.level') {
+      const eff = this.villageLevel() + houseBonusOf(this.state, this.buildingDefs);
+      return eff >= c.value;
+    }
+    return checkCondition(def.unlock, this.gateCtx());
+  };
 
   private today(): string {
     return this.time!.localDateISO(this.time!.now());
+  }
+
+  private now(): number {
+    return this.time!.now();
+  }
+
+  private villageLevel(): number {
+    return taxInfoOf(this.state, this.defs, this.table!, this.taxTable!).level;
   }
 
   private resolveTax(): number {
     return this.statBus!.resolve({ stat: 'village.tax.gold', ctx: this.time!.ctx('player') });
   }
 
-  /** материализация: гейт прошёл → открытие + стартовые жители + ролл их
-   *  потребностей на сегодня (налог НЕ собирается — первый сбор завтра) */
+  /** ленивое завершение стройок (абсолютные таймеры: finishAt в прошлом = READY) */
+  private ensureConstructions(now = this.now()): CompletedBuild[] {
+    if (this.state.construction === undefined) return [];
+    const r = completeConstructions(this.state, this.buildingDefs, now);
+    if (r.completed.length > 0) {
+      this.state = r.state;
+      this.markDirty();
+      this.bus!.publish('invalidate.stat', {});
+      this.ensureVillagers(); // XP постройки мог поднять уровень — новые жители
+    }
+    return r.completed;
+  }
+
   private ensureOpen(): boolean {
     if (this.state.unlocked) return true;
     if (!this.gatePasses()) return false;
@@ -179,7 +250,7 @@ export class VillageModule implements GameModule {
     return true;
   }
 
-  /** присоединение жителей, чей гейт прошёл (уровень деревни вырос) */
+  /** присоединение жителей, чей гейт прошёл (уровень деревни/скидка Дома) */
   private ensureVillagers(): string[] {
     if (!this.state.unlocked) return [];
     const dateISO = this.today();
@@ -210,7 +281,6 @@ export class VillageModule implements GameModule {
     }, dateISO);
     this.state = pass.state;
     if (pass.taxGold !== 0) {
-      // налог: резолв ПОСЛЕ применения состояния — провайдер читает НОВЫЙ день
       const gold = Math.max(0, this.resolveTax());
       if (gold > 0) {
         const tx = this.transaction!.transact({
@@ -219,11 +289,10 @@ export class VillageModule implements GameModule {
           reason: `налог деревни за ${dateISO} (уровень/счастье/ворчуны — шина)`,
         });
         if (tx.ok) {
-          // событие ×1 манифеста (каталог 02 §4 — строка Task 84)
           this.bus!.publish('village.taxCollected', {
             dateISO,
             gold,
-            level: taxInfoOf(this.state, this.defs, this.table!, this.taxTable!).level,
+            level: this.villageLevel(),
             grumblers: pass.grumblersAfter.length,
           });
         }
@@ -233,6 +302,92 @@ export class VillageModule implements GameModule {
       this.markDirty();
       this.bus!.publish('invalidate.stat', {});
     }
+  }
+
+  // ------------------------------------------------------------ hourTick (M16.2)
+
+  private onHourTick(now: number): void {
+    if (!this.state.unlocked) return; // до гейта — тишина среза
+    this.ensureConstructions(now);
+    this.raidWindowTick(now);
+  }
+
+  /** окно рейда: предвестник ровно за 24 ч / разрешение в ночь (маркеры) */
+  private raidWindowTick(now: number): void {
+    const action = raidWindowAction(this.state, this.raidTable!, now);
+    if (action.t === 'quiet') return;
+    if (action.t === 'warn') {
+      this.applyWarning(action.week, action.raidAt, action.warningAt, action.leadHours);
+      return;
+    }
+    this.applyRaidResolution(action.week, action.raidAt, now);
+  }
+
+  private applyWarning(week: string, raidAt: number, warningAt: number, leadHours: number): void {
+    this.state = {
+      ...this.state,
+      raid: { week, warned: true, ...(this.state.raid?.lastResult !== undefined ? { lastResult: this.state.raid.lastResult } : {}) },
+    };
+    this.markDirty();
+    // событие ×1 манифеста (каталог 02 §4 — строка Task 84)
+    this.bus!.publish('village.raidWarning', { week, raidAt, warningAt, leadHours, at: warningAt });
+  }
+
+  /** разрешение рейда: расчёт → кража (TransactionService) → событие → маркеры */
+  private applyRaidResolution(week: string, raidAt: number, now: number): RaidOutcome {
+    const outcome = resolveRaidOutcome(this.state, this.defs, this.raidTable!, {
+      villageLevel: this.villageLevel(),
+      walletGold: this.deps.walletGold(),
+      buildingDefense: buildingDefenseOf(this.state, this.buildingDefs),
+      warehouseProtection: warehouseProtectionOf(this.state, this.buildingDefs),
+      itemTypeOf: (defId) => this.itemTypeOf(defId),
+      itemName: (defId) => this.itemName(defId),
+      now,
+      raidAt,
+    });
+    if (!outcome.success && outcome.stolenGold > 0) {
+      // кража — честная транзакция списания (журнал: валюта по данным)
+      const tx = this.transaction!.transact({
+        costs: [{ t: 'currency', id: 'gold', qty: outcome.stolenGold }],
+        eventId: 'village.raidLoss',
+        reason: `рейд гоблинов ${outcome.dateISO}: кража ${outcome.stolenPercent}% склада (защита ${outcome.defense}/${outcome.threshold})`,
+      });
+      if (!tx.ok) {
+        // кошелёк не осилил списание (внешние причины) — событие всё равно
+        // честно: stolen = фактически списанное (0)
+        outcome.stolenGold = 0;
+      }
+    }
+    if (outcome.success) {
+      // победа: +строка счастья каждому жителю (данные)
+      const bonus = this.raidTable!.winHappinessBonus;
+      const villagers = Object.fromEntries(
+        Object.entries(this.state.villagers).map(([id, v]) => [
+          id,
+          { ...v, happiness: Math.min(this.table!.happiness.max, v.happiness + bonus) },
+        ]),
+      );
+      this.state = { ...this.state, villagers };
+    }
+    this.state = {
+      ...this.state,
+      raid: {
+        week,
+        warned: true,
+        lastResult: { success: outcome.success, stolen: outcome.stolenGold, dateISO: outcome.dateISO, week },
+      },
+    };
+    this.markDirty();
+    this.bus!.publish('village.raidResolved', {
+      success: outcome.success,
+      stolen: outcome.stolenGold,
+      defense: outcome.defense,
+      threshold: outcome.threshold,
+      stolenPercent: outcome.stolenPercent,
+      week,
+    });
+    this.bus!.publish('invalidate.stat', {});
+    return outcome;
   }
 
   // ------------------------------------------------------------ витрины
@@ -245,6 +400,9 @@ export class VillageModule implements GameModule {
       hasFlag: (f) => this.deps.hasFlag(f),
       resolveTax: () => this.resolveTax(),
       dateISO: () => this.today(),
+      // [M16.2] счастье-аура построек — в раскладку налог-строки (шину уже
+      // даёт провайдер; до фикса мод был невидим в витрине village.state)
+      aura: () => happinessAuraOf(this.state, this.buildingDefs),
     });
   }
 
@@ -257,17 +415,209 @@ export class VillageModule implements GameModule {
     return id === 'all' ? rows : rows.filter((r) => r.id === id || r.name === id);
   }
 
-  /** имя предмета/валюты потребности: каталог items → имя; иначе — id как есть
-   *  (валюты кошелька — П5 «неизвестное — рядовой случай») */
+  /** имя предмета/валюты: каталог items → имя; иначе — id как есть */
   private itemName(defId: string): string {
     const items = this.content!.get<Array<{ id: string; name: string }>>('items');
     return items.find((d) => d.id === defId)?.name ?? defId;
   }
 
+  /** тип предмета (каталог items; неизвестный — 'other', П5) */
+  private itemTypeOf(defId: string): string {
+    const items = this.content!.get<Array<{ id: string; itemType: string }>>('items');
+    return items.find((d) => d.id === defId)?.itemType ?? 'other';
+  }
+
+  private raidView() {
+    this.ensureOpen();
+    this.ensureVillagers();
+    this.ensureConstructions();
+    return buildRaidView(this.state, this.defs, this.raidTable!, {
+      now: () => this.now(),
+      villageLevel: () => this.villageLevel(),
+      walletGold: () => this.deps.walletGold(),
+      buildingDefense: () => buildingDefenseOf(this.state, this.buildingDefs),
+      warehouseProtection: () => warehouseProtectionOf(this.state, this.buildingDefs),
+      itemTypeOf: (defId: string) => this.itemTypeOf(defId),
+      itemName: (defId: string) => this.itemName(defId),
+    });
+  }
+
+  private buildingsView() {
+    this.ensureOpen();
+    this.ensureConstructions();
+    return buildBuildingsView(this.state, this.buildingDefs, {
+      now: () => this.now(),
+      villageLevel: () => this.villageLevel(),
+      repairDiscount: () => this.statBus!.resolve({ stat: 'village.repair.discountPercent', ctx: this.time!.ctx('player') }),
+      marketDiscount: () => this.statBus!.resolve({ stat: 'village.market.discountPercent', ctx: this.time!.ctx('player') }),
+      houseBonus: () => houseBonusOf(this.state, this.buildingDefs),
+      aura: () => taxInfoOf(this.state, this.defs, this.table!, this.taxTable!, happinessAuraOf(this.state, this.buildingDefs)).aura,
+    });
+  }
+
+  // ------------------------------------------------------------ постройка (G2)
+
+  private build(id: string): Result<SupplyReceipt> {
+    if (!this.ensureOpen()) return err(GATE_MSG);
+    this.ensureConstructions(); // ленивое завершение (абсолютные таймеры)
+    const plan = planBuild(this.state, this.buildingDefs, id, {
+      villageLevel: () => this.villageLevel(),
+      now: () => this.now(),
+    });
+    if (!plan.ok) return err(plan.error);
+    const p: BuildPlan = plan.value;
+    const costs: Array<{ t: 'currency'; id: CurrencyId; qty: number } | { t: 'item'; defId: string; qty: number }> = [];
+    if (p.costGold > 0) costs.push({ t: 'currency', id: 'gold', qty: p.costGold });
+    for (const c of p.items) {
+      costs.push(c.t === 'currency' ? { t: 'currency', id: c.id as CurrencyId, qty: c.qty } : { t: 'item', defId: c.id, qty: c.qty });
+    }
+    const tx = this.transaction!.transact({
+      costs,
+      eventId: 'village.build',
+      reason: `стройка: ${p.def.name} ур.${p.level}`,
+    });
+    if (!tx.ok) return err(`стройка не начата: ${tx.error}`);
+    this.state = applyBuildStart(this.state, p.def.id, p.finishAt);
+    this.markDirty();
+    const hoursLeft = Math.ceil((p.finishAt - this.now()) / MS_HOUR);
+    const lines = [
+      `списано: ${p.costGold}з${p.items.length > 0 ? ` + ${p.items.map((c) => `${c.id} ×${c.qty}`).join(', ')}` : ''} (TransactionService village.build)`,
+      `стройка: ${p.def.name} ур.${p.level}/${p.def.levels.length} — ${p.def.levels[p.level - 1]!.hours} ч реального времени (завершится ~${this.time!.localDateISO(p.finishAt)}; часовые таймеры — час реального времени)`,
+      `по завершении: XP деревне +${p.def.levels[p.level - 1]!.xp} · эффект ${effectLineOf(p.def, p.level, houseBonusOf(this.state, this.buildingDefs))}`,
+      `таймер: ${hoursLeft} ч осталось (живой час: time +1h — витрины village raid / village build)`,
+    ];
+    return ok({ header: `Стройка начата: ${p.def.name} ур.${p.level}`, lines });
+  }
+
+  // ------------------------------------------------------------ снаряжение (G4)
+
+  private equip(villagerId: string, itemId: string): Result<SupplyReceipt> {
+    if (!this.ensureOpen()) return err(GATE_MSG);
+    const def = this.defs.find((d) => d.id === villagerId || d.name === villagerId);
+    if (def === undefined) return err(`неизвестный житель: ${villagerId} (village state — реестр жителей)`);
+    const live = this.state.villagers[def.id];
+    if (live === undefined) return err(`${def.name} ещё не в деревне (village state)`);
+    if (itemId === 'off' || itemId === 'none' || itemId === 'снять') return this.unequip(def.id, def.name);
+    const itemDef = this.content!.get<Array<{ id: string; itemType: string; name: string }>>('items').find((d) => d.id === itemId);
+    if (itemDef === undefined) return err(`неизвестный предмет: ${itemId} (inv list — рюкзак)`);
+    if (!this.raidTable!.defense.equippableTypes.includes(itemDef.itemType)) {
+      return err(`${itemDef.name} — не снаряжение (можно вручать: ${this.raidTable!.defense.equippableTypes.join('/')})`);
+    }
+    if (this.state.equipped?.[def.id] !== undefined) {
+      return err(`у ${def.name} уже есть снаряжение (${this.state.equipped[def.id]!.defId}) — сначала снимите: village equip ${def.id} off`);
+    }
+    // экземпляр, который ИЗЫМЕТ транзакция: худшие-вперёд (D25 канона M02)
+    const candidates = this.deps.listBackpack().filter((e) => e.defId === itemId && e.qty > 0);
+    if (candidates.length === 0) return err(`предмета нет в рюкзаке: ${itemId} (inv list; экипированное — сначала снимите)`);
+    const worst = [...candidates].sort((a, b) => tierRank(a.tier) - tierRank(b.tier) || a.value - b.value)[0]!;
+    const tx = this.transaction!.transact({
+      costs: [{ t: 'item', defId: itemId, qty: 1 }],
+      eventId: 'village.equip',
+      reason: `снаряжение ${def.name}: ${itemId} (${worst.tier}/${Math.round(worst.value)})`,
+    });
+    if (!tx.ok) return err(`снаряжение не вручено: ${tx.error}`);
+    const sharpening = this.deps.forgeLevelOf(worst.iid);
+    const equipped: VillageEquipState = {
+      defId: itemId,
+      tier: (QUALITY_TIERS.includes(worst.tier as QualityTier) ? worst.tier : 'D') as QualityTier,
+      value: worst.value,
+      sharpening,
+    };
+    const equippedAll = { ...(this.state.equipped ?? {}) };
+    equippedAll[def.id] = equipped;
+    this.state = { ...this.state, equipped: equippedAll };
+    this.markDirty();
+    this.bus!.publish('invalidate.stat', {});
+    const strength = raidDefenseOf(this.state, this.defs, this.raidTable!, 0, {
+      itemTypeOf: (d) => this.itemTypeOf(d),
+      itemName: (d) => this.itemName(d),
+    }).villagers.find((r) => r.id === def.id)!.strength;
+    return ok({
+      header: `Снаряжение ${def.name}: ${this.itemName(itemId)}`,
+      lines: [
+        `списан предмет: ${itemId} (${equipped.tier}/${Math.round(equipped.value)}${sharpening > 0 ? `, заточка ${sharpening}` : ''}) — TransactionService village.equip`,
+        `сила защиты жителя: +${strength} (f(тип ${itemDef.itemType}, качество, forgeLevel) — данные raid.ts)`,
+        `витрина сил и порог — village.raid; снятие: village equip ${def.id} off (возврат предмета)`,
+      ],
+    });
+  }
+
+  private unequip(villagerId: string, villagerName: string): Result<SupplyReceipt> {
+    const snap = this.state.equipped?.[villagerId];
+    if (snap === undefined) return err(`у ${villagerName} нет снаряжения (village raid — витрина сил)`);
+    const probe = this.deps.canAcquireItem(snap.defId, 1);
+    if (!probe.fits) {
+      return err(`инвентарь полон — снять нечего куда: свободно ${probe.free}, нужно записей 1 (D23)`);
+    }
+    // возврат с ИСХОДНЫМ качеством (прецедент подарков M16.1: транзакционные
+    // гранты предметов роллят качество — канал inventory.add с точным тиром)
+    const r = this.deps.giveItem(snap.defId, snap.tier, snap.value, 1, 'village.unequip');
+    if (!r.ok) return err(`возврат не состоялся: ${r.error}`);
+    const equipped = { ...(this.state.equipped ?? {}) };
+    delete equipped[villagerId];
+    this.state = { ...this.state, ...(Object.keys(equipped).length > 0 ? { equipped } : {}) };
+    if (Object.keys(equipped).length === 0) {
+      const next = { ...this.state };
+      delete next.equipped;
+      this.state = next;
+    }
+    this.markDirty();
+    this.bus!.publish('invalidate.stat', {});
+    const lines = [
+      `возвращён предмет: ${snap.defId} (тир ${snap.tier}/${Math.round(snap.value)}) — канал inventory.add, inv list точен`,
+    ];
+    if (snap.sharpening > 0) {
+      lines.push(`заточка ${snap.sharpening} не переносится при снятии (канал выдачи с заточкой в корпусе отсутствует — M02/M10 чтение; сила защиты учитывала её по снапшоту)`);
+    }
+    return ok({ header: `Снаряжение снято: ${villagerName}`, lines });
+  }
+
+  // ------------------------------------------------------------ форс рейда (G7, dev)
+
+  /** по стадиям: предвестник → ночь; после разрешения — отказ маркером */
+  private forceRaid(): Result<SupplyReceipt> {
+    if (!this.ensureOpen()) return err(GATE_MSG);
+    this.ensureConstructions();
+    const now = this.now();
+    const week = raidWeekKeyOf(now);
+    const raidAt = raidAtOfWeek(now, this.raidTable!);
+    if (this.state.raid?.lastResult?.week === week) {
+      const next = nextRaidAfter(now, this.raidTable!);
+      return err(
+        `рейд недели ${week} уже разрешён (маркер raid.lastResult) — следующее окно: неделя ${next.week}, рейд ~${new Date(next.at).toLocaleString('ru-RU')} (или форс после смены недели: time +7d)`,
+      );
+    }
+    if (now < raidAt && !(this.state.raid?.week === week && this.state.raid?.warned === true)) {
+      const warningAt = warningAtOf(raidAt, this.raidTable!);
+      this.applyWarning(week, raidAt, warningAt, this.raidTable!.warningLeadHours);
+      return ok({
+        header: `Форс окна рейда (dev): предвестник — неделя ${week}`,
+        lines: [
+          `«разведчик видел огни» — событие village.raidWarning в ленте`,
+          `рейд-ночь: ${new Date(raidAt).toLocaleString('ru-RU')} — ровно через ${this.raidTable!.warningLeadHours} ч (${new Date(warningAt).toLocaleString('ru-RU')})`,
+          `повторный форс — разрешение ночи; витрина — village.raid`,
+        ],
+      });
+    }
+    const outcome = this.applyRaidResolution(week, raidAt, now);
+    const lines = [
+      `защита ${outcome.defense} vs порог ${outcome.threshold} (${outcome.defense >= outcome.threshold ? 'ПОБЕДА' : 'поражение'} — расчёт, не лотерея)`,
+    ];
+    if (outcome.success) {
+      lines.push(`кража: 0 · счастье-строка: +${this.raidTable!.winHappinessBonus} каждому жителю (данные)`);
+    } else {
+      lines.push(
+        `кража: ${outcome.stolenPercent}% склада (капа ≤ ${this.raidTable!.stolen.capPercent}%${outcome.warehouseProtection > 0 ? `, Склад −${outcome.warehouseProtection}%` : ''}) → ${outcome.stolenGold}з (TransactionService village.raidLoss)`,
+      );
+    }
+    lines.push(`событие village.raidResolved {success: ${outcome.success}, stolen: ${outcome.stolenGold}} в ленте; витрина — village.raid`);
+    return ok({ header: `Форс ночи рейда (dev): неделя ${week}`, lines });
+  }
+
   // ------------------------------------------------------------ поставка (G3)
 
   private supply(villagerId: string, itemId: string, qtyArg?: number): Result<SupplyReceipt> {
-    if (!this.ensureOpen()) return err('деревня заперта: уровень 30 + ачивка «Мастер хутора» (village state)');
+    if (!this.ensureOpen()) return err(GATE_MSG);
     const def = this.defs.find((d) => d.id === villagerId || d.name === villagerId);
     if (def === undefined) return err(`неизвестный житель: ${villagerId} (village state — реестр жителей)`);
     const live = this.state.villagers[def.id];
@@ -293,7 +643,6 @@ export class VillageModule implements GameModule {
       reason: `поставка ${def.name}: ${itemId} ×${qty}`,
     });
     if (!tx.ok) return err(`поставка не состоялась: ${tx.error}`);
-    // XP деревне + счастье (G3)
     const xpGain = need.kind === 'weekly' ? this.table!.xp.perWeeklyNeed : this.table!.xp.perDailyNeed;
     const happiness = Math.min(this.table!.happiness.max, live.happiness + this.table!.happiness.gainOnSatisfy);
     this.state = {
@@ -304,7 +653,7 @@ export class VillageModule implements GameModule {
         [def.id]: { ...live, happiness, lastSatisfied: this.today() },
       },
     };
-    this.ensureVillagers(); // уровень мог вырасти — присоединение новых
+    this.ensureVillagers();
     this.markDirty();
     this.bus!.publish('invalidate.stat', {});
     const lines = [
@@ -355,7 +704,7 @@ export class VillageModule implements GameModule {
   // ------------------------------------------------------------ помощь (G8)
 
   private help(): Result<HelpReceipt> {
-    if (!this.ensureOpen()) return err('деревня заперта: уровень 30 + ачивка «Мастер хутора» (village state)');
+    if (!this.ensureOpen()) return err(GATE_MSG);
     const today = this.today();
     if (this.state.helpLastDay === today) {
       return err('помощь уже была сегодня (раз в день; снова — после смены дня)');
@@ -365,7 +714,7 @@ export class VillageModule implements GameModule {
       views: this.deps.views,
       hasTask: (type) => this.tasksRef !== null && this.tasksRef.has(type),
       runTask: (type, params, workerId) =>
-        this.tasksRef!.runTask(type, { now: this.time!.now(), workerId, params }) as Result<unknown>,
+        this.tasksRef!.runTask(type, { now: this.now(), workerId, params }) as Result<unknown>,
       roll01: (stream) => this.rngBus!.rollRange(0, 1, 'uniform', stream),
       withVillagerEnergy: (run) => this.deps.withVillagerEnergy(run),
     });
@@ -404,7 +753,7 @@ export class VillageModule implements GameModule {
           this.bus!.publish('village.taxCollected', {
             dateISO,
             gold,
-            level: taxInfoOf(this.state, this.defs, this.table!, this.taxTable!).level,
+            level: this.villageLevel(),
             grumblers: pass.grumblersAfter.length,
           });
           taxLine = `налог собран: ${gold}з (village.taxCollected · TransactionService village.tax)`;
@@ -442,4 +791,29 @@ function unlockLine(def: VillagerDef): string {
   if (c === undefined) return 'открыт всегда';
   if (c.t === 'statAtLeast' && c.stat === 'village.level') return `уровень деревни ${c.value}`;
   return 'условие unlock';
+}
+
+function tierRank(tier: string): number {
+  const i = QUALITY_TIERS.indexOf(tier as QualityTier);
+  return i < 0 ? 0 : i;
+}
+
+function effectLineOf(def: VillageBuildingDef, level: number, houseBonusNow: number): string {
+  const eff = def.levels[level - 1]!.effect;
+  switch (def.kind) {
+    case 'house':
+      return `+${eff} к unlock-скидке жителей (следующий из 12 доступен уровнем ниже; скидка станет ${eff}, сейчас ${houseBonusNow})`;
+    case 'warehouse':
+      return `защита склада ${eff}% от кражи рейда`;
+    case 'forge':
+      return `цена починки −${eff}% (полцены на ур.3; источник 04-DISCOUNTS §2.2)`;
+    case 'market':
+      return `−${eff}% у деревенских купцов (потребитель — биржа M16.3)`;
+    case 'defense':
+      return `+${eff} к защите деревни от рейда`;
+    case 'happiness':
+      return `счастье-аура +${eff} к среднему счастью налога`;
+    default:
+      return String(eff);
+  }
 }

@@ -85,7 +85,7 @@ export async function runVillagePart2(): Promise<CheckResult[]> {
       [1, 50, 0], [1, 70, 0], [5, 85, 2], [10, 30, 4], [25, 100, 0], [3, 0, 1],
     ];
     const okGrid = grid.every(([lvl, hap, gr]) => {
-      const info = { level: lvl, avgHappiness: hap, grumblers: gr };
+      const info = { level: lvl, avgHappiness: hap, grumblers: gr, aura: 0 };
       const mods = taxModifiersOf(info, VILLAGE_TAX);
       const sumInc = mods.reduce((s, m) => s + m.value, 0);
       const manual = Math.round(VILLAGE_TAX.baseGold * (1 + sumInc / 100));
@@ -245,7 +245,7 @@ export async function runVillagePart2(): Promise<CheckResult[]> {
     f2.dispose();
   }
 
-  // 14. манифест = факту (бриф §0: 1.0.0; eventsPublished ровно ×1; tasks 15)
+  // 14. манифест = факту (бриф M16.2 §0/G6: 1.1.0; eventsPublished ровно ×3; tasks 15)
   {
     const f = await makeSeededVillageGame('v161-manifest');
     const m = f.game.modules.get('village');
@@ -253,19 +253,34 @@ export async function runVillagePart2(): Promise<CheckResult[]> {
     const api = f.village;
     const manifestOk =
       m !== null &&
-      m.manifest.version === '1.0.0' &&
+      m.manifest.version === '1.1.0' &&
       m.manifest.stateKey === 'village' &&
-      JSON.stringify(m.manifest.publicApi) === JSON.stringify(['village.state', 'village.need', 'village.supply', 'village.help', 'village.force']) &&
-      JSON.stringify(m.manifest.eventsPublished) === JSON.stringify(['village.taxCollected']) &&
-      JSON.stringify(m.manifest.eventsSubscribed) === JSON.stringify([{ event: 'time.dayTick', handler: 'onDayTick' }]) &&
+      JSON.stringify(m.manifest.publicApi) ===
+        JSON.stringify([
+          'village.state',
+          'village.need',
+          'village.supply',
+          'village.help',
+          'village.force',
+          'village.build',
+          'village.equip',
+          'village.raid',
+          'village.raid.force',
+        ]) &&
+      JSON.stringify(m.manifest.eventsPublished) === JSON.stringify(['village.taxCollected', 'village.raidWarning', 'village.raidResolved']) &&
+      JSON.stringify(m.manifest.eventsSubscribed) ===
+        JSON.stringify([
+          { event: 'time.dayTick', handler: 'onDayTick' },
+          { event: 'time.hourTick', handler: 'onHourTick' },
+        ]) &&
       JSON.stringify(m.manifest.modifierProviders) === JSON.stringify(['villageProvider']) &&
       JSON.stringify(m.manifest.taskExecutors) === JSON.stringify(['village-helper']) &&
       JSON.stringify(m.manifest.statsCounters) === JSON.stringify([]);
     results.push(
       check(
-        'манифест = факту (01 §9): version 1.0.0; publicApi РОВНО ×5 (state/need/supply/help/force); eventsPublished РОВНО ×1 village.taxCollected (каталог 02 §4 Task 84, НЕ редактировался); eventsSubscribed ×1 time.dayTick; modifierProviders [villageProvider] (живой резолв); taskExecutors [village-helper] — исполнитель СУЩЕСТВУЮЩИХ типов, реестр задач 15 жив (НОВЫХ типов НЕТ); statsCounters []',
-        () => manifestOk && tasks.length === 15 && Object.keys(api).length === 5,
-        { expected: '1.0.0 / ×5 / ×1 / tasks 15', actual: `${m?.manifest.version ?? '—'} / api ×${Object.keys(api).length} / tasks ${tasks.length}` },
+        'манифест = факту (01 §9; bump 1.0.0 → 1.1.0 по факту M16.2): version 1.1.0; publicApi РОВНО ×9 (state/need/supply/help/force + build/equip/raid/raid.force — имена ТОЧЕЧНЫЕ); eventsPublished РОВНО ×3: village.taxCollected + village.raidWarning + village.raidResolved (строки каталога 02 §4 — касса Task 84, каталог сеансом НЕ редактировался); eventsSubscribed ×2 time (dayTick + hourTick); modifierProviders [villageProvider] (эффекты зданий — расширение, НОВЫХ провайдеров НЕТ); taskExecutors [village-helper] — реестр задач 15 жив (mine.assist — контракт-слот [DECISION M162-бой]); statsCounters []',
+        () => manifestOk && tasks.length === 15 && Object.keys(api).length === 9,
+        { expected: '1.1.0 / ×9 / ×3 / tasks 15', actual: `${m?.manifest.version ?? '—'} / api ×${Object.keys(api).length} / tasks ${tasks.length}` },
       ),
     );
     f.dispose();

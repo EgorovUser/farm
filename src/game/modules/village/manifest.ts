@@ -1,30 +1,25 @@
 /**
  * Манифест M16 (01-CORE §9): единственное место точек интеграции.
- * Версия 1.0.0 = факту сеанса M16.1 (бриф §0 «манифест village 1.0.0 =
- * факту», образец mine/passives):
- *  - publicApi ×5 [DECISION-имена, бриф §0]: village.state (гейт/уровень/
- *    XP/жители/счастье/налог-строка), village.need <villagerId|all>,
- *    village.supply <villagerId> <itemId> [qty] (TransactionService),
- *    village.help (дневная помощь), village force (dev: форс дня деревни —
- *    переролль потребностей + сбор налога; прецедент lake.force/
- *    passives reset);
- *  - eventsPublished ровно ×1: village.taxCollected — НОВАЯ строка
- *    каталога 02 §4, зарегистрирована кассой [Task 84]; каталог сеансом
- *    НЕ редактировался. village.reputationChanged/trade.fulfilled —
- *    с Фазы 0, публиковать в M16.3; raid-пара — M16.2 (замки §6);
- *  - eventsSubscribed — только time-события ядра: time.dayTick (налог/
- *    ролл потребностей/ворчание; catchUp публикует те же границы —
- *    сверено с hourTick/dayTick-модулями M05/M08);
- *  - modifierProviders: villageProvider — счастье-модификаторы и
- *    ворчун-минус к налогам (эффекты зданий — M16.2, скидки репутации —
- *    M16.3); village.level — override фактическим уровнем (unlock-гейты
- *    жителей через statAtLeast);
- *  - taskExecutors: village-helper — исполнитель СУЩЕСТВУЮЩИХ типов
- *    TaskRegistry (farm, lake, pen + контракт-слот mine.assist M16.2;
- *    НОВЫЙ исполнитель, НЕ новые типы — прецедент M11 workers; реестр
- *    задач 15 жив; селектор пропускает незарегистрированные — help.ts);
- *  - statsCounters [] (счётчики налогов-итого/подарков/сделок — задел
- *    трендов M16.3, домен counters.ts M01 сеансом НЕ трогается).
+ * Версия 1.1.0 = факту сеанса M16.2 (bump по факту; отличия от 1.0.0
+ * ТОЛЬКО: version; publicApi ×5 → ×9; eventsPublished ×1 → ×3;
+ * eventsSubscribed +time.hourTick):
+ *  - publicApi ×9: village.state / village.need / village.supply /
+ *    village.help / village.force (dev) + village.build <id|витрина> /
+ *    village.equip <villagerId> <itemId|off> / village.raid /
+ *    village.raid.force (dev: форс окна предвестник→ночь — прецедент
+ *    lake.force / village.force);
+ *  - eventsPublished ровно ×3: village.taxCollected (Task 84) +
+ *    village.raidWarning + village.raidResolved — строки каталога 02 §4
+ *    [касса Task 84; каталог сеансом НЕ редактировался];
+ *    village.reputationChanged/trade.fulfilled — публиковать в M16.3;
+ *  - eventsSubscribed — time-события: dayTick (налог/потребности/
+ *    ворчание) + hourTick (таймеры построек, окно рейда; catchUp — те же
+ *    границы, идемпотентность маркерами);
+ *  - modifierProviders: villageProvider (эффекты зданий — Кузница/Рынок
+ *    override, счастье-аура к налогу; НОВЫХ провайдеров НЕТ);
+ *  - taskExecutors: village-helper без изменений (реестр задач 15 жив,
+ *    mine.assist — контракт-слот [DECISION M162-бой]);
+ *  - statsCounters [] (счётчики трендов — M16.3).
  */
 import type { ModuleManifest } from '@/game/module-registry';
 
@@ -32,7 +27,7 @@ export function createVillageManifest(): ModuleManifest {
   return {
     id: 'village',
     title: 'M16 Деревня',
-    version: '1.0.0',
+    version: '1.1.0',
     stateKey: 'village',
     publicApi: [
       'village.state',
@@ -41,9 +36,18 @@ export function createVillageManifest(): ModuleManifest {
       'village.help',
       // dev (бриф §0: «помечен dev» — прецеденты lake.force/passives.reset)
       'village.force',
+      // --- M16.2
+      'village.build',
+      'village.equip',
+      'village.raid',
+      // dev: форс окна рейда (предвестник → ночь)
+      'village.raid.force',
     ],
-    eventsPublished: ['village.taxCollected'],
-    eventsSubscribed: [{ event: 'time.dayTick', handler: 'onDayTick' }],
+    eventsPublished: ['village.taxCollected', 'village.raidWarning', 'village.raidResolved'],
+    eventsSubscribed: [
+      { event: 'time.dayTick', handler: 'onDayTick' },
+      { event: 'time.hourTick', handler: 'onHourTick' },
+    ],
     modifierProviders: ['villageProvider'],
     taskExecutors: ['village-helper'],
     statsCounters: [],

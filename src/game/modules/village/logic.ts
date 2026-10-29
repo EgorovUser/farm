@@ -210,20 +210,31 @@ export interface TaxInfo {
   level: number;
   avgHappiness: number;
   grumblers: number;
+  /** [M16.2] счастье-аура построек (Колодец/Храм/Баня) — отдельный мод */
+  aura: number;
 }
 
-/** сводка для провайдера и витрины (ожидание дня — до resolve) */
-export function taxInfoOf(state: VillageState, defs: VillagerDef[], table: VillageTable, tax: VillageTaxTable): TaxInfo {
+/** сводка для провайдера и витрины (ожидание дня — до resolve);
+ *  aura — аура построек (0 по умолчанию — поведение M16.1 не меняется) */
+export function taxInfoOf(
+  state: VillageState,
+  defs: VillagerDef[],
+  table: VillageTable,
+  tax: VillageTaxTable,
+  aura = 0,
+): TaxInfo {
   const live = defs.filter((d) => state.villagers[d.id] !== undefined);
   const level = villageLevelOf(state.xp, table.level);
-  if (live.length === 0) return { level, avgHappiness: tax.happinessPivot, grumblers: 0 };
+  if (live.length === 0) return { level, avgHappiness: tax.happinessPivot, grumblers: 0, aura };
   const values = live.map((d) => state.villagers[d.id]!.happiness);
   const avg = values.reduce((a, b) => a + b, 0) / values.length;
   const grumblers = live.filter((d) => state.villagers[d.id]!.grumbleDays >= table.happiness.grumbleThreshold).length;
-  return { level, avgHappiness: avg, grumblers };
+  return { level, avgHappiness: avg, grumblers, aura };
 }
 
-/** модификаторы провайдера для стата 'village.tax.gold' (G4/G6 — шина) */
+/** модификаторы провайдера для стата 'village.tax.gold' (G4/G6 — шина).
+ *  [M16.2] аура — ОТДЕЛЬНЫЙ мод (сумма = swing × (avg + aura − pivot)/50,
+ *  без двойного счёта: счастье-мод считается по РЕАЛЬНОМУ среднему). */
 export function taxModifiersOf(
   info: TaxInfo,
   tax: VillageTaxTable,
@@ -233,6 +244,8 @@ export function taxModifiersOf(
   if (levelInc !== 0) mods.push({ id: 'village.tax.level', value: levelInc });
   const happinessInc = (tax.happinessSwingPercent * (info.avgHappiness - tax.happinessPivot)) / 50;
   if (happinessInc !== 0) mods.push({ id: 'village.tax.happiness', value: happinessInc });
+  const auraInc = (tax.happinessSwingPercent * info.aura) / 50;
+  if (auraInc !== 0) mods.push({ id: 'village.tax.aura', value: auraInc });
   const grumblerInc = -tax.grumblerPenaltyPercent * info.grumblers;
   if (grumblerInc !== 0) mods.push({ id: 'village.tax.grumbler', value: grumblerInc });
   return mods;

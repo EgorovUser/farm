@@ -753,12 +753,18 @@ export function wireGameModules(
           ok: false as const,
           error: 'модуль инвентаря недоступен',
         }) as Result<unknown>,
-      canAcquireItem: (defId, qty) =>
-        (modules.call('inventory', 'inventory.canAcquire', defId, qty) ?? {
-          fits: false,
-          free: 0,
-          newEntries: 0,
-        }) as { fits: boolean; free: number; newEntries: number },
+      canAcquireItem: (defId, qty) => {
+        // [M16.2 · фикс наследия M16.1] inventory.canAcquire возвращает Result —
+        // разворот к контракту deps: до фикса проба читала undefined → предметные
+        // подарки деревни всегда печатали «не поместился», снятие снаряжения
+        // отказывало «инвентарь полон» (канон 815 это не ловил — сид чека 10
+        // роллил валютный подарок; поймано чеком M16.2 «снятие снаряжения»)
+        const r = modules.call('inventory', 'inventory.canAcquire', defId, qty) as
+          | { ok: true; value: { newEntries: number; free: number; fits: boolean } }
+          | { ok: false; error: string }
+          | null;
+        return r !== null && r.ok ? r.value : { fits: false, free: 0, newEntries: 0 };
+      },
       withVillagerEnergy: (run: () => Result<unknown>): Result<unknown> => {
         const snap = () =>
           (modules.call('player', 'player.snapshot') ?? { energy: { current: 0, max: 0 } }) as {
@@ -775,6 +781,19 @@ export function wireGameModules(
           modules.call('player', 'player.setEnergy', before);
         }
       },
+      // --- [M16.2] снаряжение жителей: записи рюкзака (витрина inventory.list
+      //     — экипированные исключены, D30; порядок — как в рюкзаке) + заточка
+      //     экземпляра (витрина forge.levelOf — M10 хранит по iid в своём
+      //     срезе; чтение через реестр, НЕ импорт) + золото кошелька (кража)
+      listBackpack: () =>
+        ((modules.call('inventory', 'inventory.list') ?? []) as Array<{
+          iid: string;
+          defId: string;
+          qty: number;
+          quality: { tier: string; value: number };
+        }>).map((e) => ({ iid: e.iid, defId: e.defId, qty: e.qty, tier: e.quality.tier, value: e.quality.value })),
+      forgeLevelOf: (iid) => Number(modules.call('forge', 'forge.levelOf', iid) ?? 0),
+      walletGold: () => wallet.get('gold'),
       views: {
         farmTabs: () =>
           ((modules.call('farm', 'farm.state') ?? { tabs: [] }) as {

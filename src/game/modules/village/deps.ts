@@ -40,4 +40,13 @@ export interface VillageModuleDeps {
   /** энергетически нейтральный вызов исполнителя (G8 «бесплатно») */
   withVillagerEnergy(run: () => Result<unknown>): Result<unknown>;
   views: VillageViews;
+  /** [M16.2 · G4] записи рюкзака для выбора экземпляра снаряжения:
+   *  транзакция изымает ХУДШИЕ-вперёд (D25) — снапшот берётся с того
+   *  экземпляра, который реально будет списан (витрина inventory.list) */
+  listBackpack(): Array<{ iid: string; defId: string; qty: number; tier: string; value: number }>;
+  /** [M16.2 · G4] уровень заточки экземпляра (витрина forge.levelOf — M10
+   *  хранит sharpening по iid в СВОЁМ срезе; чтение, НЕ импорт) */
+  forgeLevelOf(iid: string): number;
+  /** [M16.2 · G5] золото кошелька на момент рейда («склад дня» кражи) */
+  walletGold(): number;
 }

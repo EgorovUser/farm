@@ -96,6 +96,76 @@ export interface VillageHelpTable {
   tasks: VillageHelpTaskDef[];
 }
 
+/** [M16.2] цена уровня постройки: золото + материалы/изделия — TransactionService
+ *  (t: 'currency' — валюты кошелька 03-DATA §1: planks/logs/nails/stone…;
+ *   t: 'item' — предметы M09: iron_ingot/iron_plate/cloth/warm_scarf…) */
+export interface VillageCostEntry {
+  t: 'currency' | 'item';
+  id: string;
+  qty: number;
+}
+
+/** уровень постройки 1–3 (карточка §3: «улучшение = та же механика») */
+export interface VillageBuildingLevelDef {
+  costGold: number;
+  items: VillageCostEntry[];
+  /** ЧАСЫ РЕАЛЬНОГО ВРЕМЕНИ до завершения (таймер hourTick-класса, §0) */
+  hours: number;
+  /** сила эффекта уровня (смысл — по kind здания) */
+  effect: number;
+  /** XP деревне за ЗАВЕРШЕНИЕ уровня (карточка §3: XP = Σ потребностей И ПОСТРОЕК) */
+  xp: number;
+}
+
+/** здание деревни (карточка §3 — 9 штук; [DECISION M162-здания]) */
+export interface VillageBuildingDef {
+  id: string;
+  name: string;
+  desc: string;
+  /** house +1 житель (unlock-скидка) / warehouse защита % / forge −% ремонта /
+   *  market −% купцов / defense защита рейда / happiness аура счастья */
+  kind: 'house' | 'warehouse' | 'forge' | 'market' | 'defense' | 'happiness';
+  /** гейт открытия — уровень ДЕРЕВНИ (statAtLeast 'village.level' — override провайдера) */
+  unlock: Condition;
+  levels: [VillageBuildingLevelDef, VillageBuildingLevelDef, VillageBuildingLevelDef];
+}
+
+/** рейд гоблинов (карточка §4; [DECISION M162-рейд] — порог-данные, БЕЗ rng) */
+export interface VillageRaidTable {
+  /** iso-день недели рейд-ночи (1=пн..7=вс) */
+  weekday: number;
+  /** час ночи рейда (локальное время игрока) */
+  hour: number;
+  /** предвестник РОВНО за N часов (каталог: 24) */
+  warningLeadHours: number;
+  /** порог защиты: base + perVillageLevel × (уровень деревни − 1) */
+  threshold: { base: number; perVillageLevel: number };
+  defense: {
+    /** базовая сила по типу предмета (weapon/armor/shield; прочее — other) */
+    typeBase: Record<string, number>;
+    /** +за ранг тира качества (D=0 .. SS=5) */
+    tierStep: number;
+    /** + value × factor (дробная часть качества 0..100) */
+    valueFactor: number;
+    /** + за уровень заточки (forgeLevel; канал M10 «заточка → качество») */
+    sharpenStep: number;
+    /** какие типы предметов можно вручать жителям (карточка §4: оружие/броня) */
+    equippableTypes: string[];
+  };
+  stolen: {
+    /** база кражи (% склада) при минимальном дефиците */
+    basePercent: number;
+    /** +% за каждый пункт дефицита защиты ниже порога */
+    perDeficitPoint: number;
+    /** КАПА cozy-инварианта: кража ≤ 20% склада дня (zod + чек-оракул) */
+    capPercent: number;
+    /** что воруется — данные (cozy: только золото; предметы игрока неприкосновенны) */
+    currencies: ['gold'];
+  };
+  /** победа: +N счастья каждому жителю («строка счастья», карточка §4) */
+  winHappinessBonus: number;
+}
+
 /** общий баланс деревни (table.ts): счастье/ворчание/XP-кривая/гейт */
 export interface VillageTable {
   gate: Condition;
@@ -121,14 +191,19 @@ export interface VillageTable {
 
 /** БАЗЫ домена (П2; форма — паттерн BasesTable): 'village.tax.gold' =
  *  VILLAGE_TAX.baseGold (зеркало), 'village.level' = 1 (провайдер даёт
- *  override фактическим уровнем). */
+ *  override фактическим уровнем). [M16.2] Кузница/Рынок — базы 0
+ *  (провайдер даёт override эффектом построенного уровня). */
 export interface VillageBasesTable {
   bases: {
     'village.tax.gold': number;
     'village.level': number;
+    'village.repair.discountPercent': number;
+    'village.market.discountPercent': number;
   };
   meta: {
     'village.tax.gold': { min?: number; round?: 'round' | 'floor' | 'ceil' | 'none' };
     'village.level': { min?: number; round?: 'round' | 'floor' | 'ceil' | 'none' };
+    'village.repair.discountPercent': { min?: number; round?: 'round' | 'floor' | 'ceil' | 'none' };
+    'village.market.discountPercent': { min?: number; round?: 'round' | 'floor' | 'ceil' | 'none' };
   };
 }

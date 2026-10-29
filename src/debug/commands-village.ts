@@ -4,6 +4,8 @@
  * village.need <id|all>, village.supply <id> <item> [qty] (TransactionService),
  * village.help (дневная помощь), village.force (dev: форс дня деревни —
  * переролль потребностей + сбор налога; помечен dev, прецедент lake.force).
+ * [M16.2] village.build <id|витрина>, village.equip <villagerId> <itemId|off>,
+ * village.raid (порог/защита/расписание/маркеры), village.raid.force (dev).
  */
 import type { CommandRegistry, CommandContext } from './console-types';
 
@@ -163,6 +165,132 @@ export function registerVillageCommands(registry: CommandRegistry): void {
       const v = api['village.force']() as { header: string; lines: string[] };
       ctx.printTitle(v.header);
       for (const line of v.lines) ctx.print(`  ${line}`);
+      ctx.refresh();
+    },
+  });
+
+  // ------------------------------------------------------------ M16.2
+
+  registry.register({
+    name: 'village.build',
+    usage: 'village.build [id]',
+    description: 'постройки деревни: реестр (без аргумента) / стройка следующего уровня (TransactionService + часы реального времени)',
+    run(args, ctx) {
+      const api = ctx.game.modules.get('village')?.api;
+      if (!api) return ctx.printErr('модуль деревни не активен');
+      if (args[0] === undefined || args[0] === '') {
+        const v = api['village.build']() as {
+          level: number;
+          rows: Array<{
+            id: string; name: string; desc: string; kind: string; level: number; maxLevel: number;
+            status: string; unlockLine: string; builtAt: string | null;
+            construction: { finishAt: number; hoursLeft: number } | null;
+            next: { level: number; costGold: number; items: Array<{ t: string; id: string; qty: number }>; hours: number; effect: number; xp: number } | null;
+            effectNow: number;
+          }>;
+          effects: { repairDiscount: number; marketDiscount: number; houseBonus: number; aura: number };
+        };
+        ctx.printTitle(`Постройки деревни (village.build) — уровень деревни ${v.level}`);
+        for (const r of v.rows) {
+          const status =
+            r.status === 'construction'
+              ? `СТРОИТСЯ — ${r.construction!.hoursLeft} ч осталось`
+              : r.status === 'built'
+                ? `построен ${r.level}/${r.maxLevel} (${r.builtAt ?? '—'})`
+                : r.status === 'locked'
+                  ? `закрыто: ${r.unlockLine}`
+                  : 'доступно к стройке';
+          ctx.print(`  ${r.name} (${r.id}) · ${r.kind} — ${status}`);
+          ctx.print(`    ${r.desc}`);
+          if (r.effectNow > 0) ctx.print(`    эффект сейчас: ${r.effectNow} (${r.kind === 'house' ? 'скидка unlock жителей' : r.kind === 'happiness' ? 'аура счастья' : r.kind === 'defense' ? 'защита' : r.kind === 'warehouse' ? '% защиты склада' : 'скидка %'})`);
+          if (r.next !== null) {
+            const items = r.next.items.length > 0 ? ` + ${r.next.items.map((c) => `${c.id} ×${c.qty}`).join(', ')}` : '';
+            ctx.print(`    след. уровень ${r.next.level}: ${r.next.costGold}з${items} · ${r.next.hours} ч · XP +${r.next.xp} · эффект ${r.next.effect}`);
+          }
+        }
+        ctx.print(`  эффекты: Кузница −${v.effects.repairDiscount}% починки · Рынок −${v.effects.marketDiscount}% купцов · Дом-скидка ${v.effects.houseBonus} · аура счастья +${v.effects.aura}`);
+        return;
+      }
+      const r = api['village.build'](args[0]) as R<{ header: string; lines: string[] }>;
+      if (!r.ok) return ctx.printErr(r.error);
+      ctx.printOk(`  ${r.value.header}`);
+      for (const line of r.value.lines) ctx.print(`    ${line}`);
+      ctx.refresh();
+    },
+  });
+
+  registry.register({
+    name: 'village.equip',
+    usage: 'village.equip <villagerId> <itemId|off>',
+    description: 'снарядить жителя оружием/бронёй из рюкзака (TransactionService; снапшот качества/заточки) или снять (off — возврат предмета)',
+    run(args, ctx) {
+      const api = ctx.game.modules.get('village')?.api;
+      if (!api) return ctx.printErr('модуль деревни не активен');
+      const [vid, item] = args;
+      if (vid === undefined || item === undefined) {
+        return ctx.printErr('формат: village equip <villagerId> <itemId|off> (жители — village state; рюкзак — inv list)');
+      }
+      const r = api['village.equip'](vid, item) as R<{ header: string; lines: string[] }>;
+      if (!r.ok) return ctx.printErr(r.error);
+      ctx.printOk(`  ${r.value.header}`);
+      for (const line of r.value.lines) ctx.print(`    ${line}`);
+      ctx.refresh();
+    },
+  });
+
+  registry.register({
+    name: 'village.raid',
+    usage: 'village.raid',
+    description: 'рейд: порог/суммарная защита/силы жителей/расписание/маркеры окна (числа на стол)',
+    run(_args, ctx) {
+      const api = ctx.game.modules.get('village')?.api;
+      if (!api) return ctx.printErr('модуль деревни не активен');
+      const v = api['village.raid']() as {
+        threshold: number;
+        villageLevel: number;
+        defense: { total: number; buildings: number; villagers: Array<{ id: string; name: string; item: string; tier: string; value: number; sharpening: number; strength: number }> };
+        warehouseProtection: number;
+        walletGold: number;
+        schedule: { weekday: string; hour: number; nextAt: number; nextWeek: string; inHours: number; warningAt: number };
+        warning: { sent: boolean; week: string | null; leadHours: number; resolvedThisWeek: boolean };
+        lastResult: { success: boolean; stolen: number; dateISO: string; week: string } | null;
+      };
+      const next = new Date(v.schedule.nextAt);
+      const warn = new Date(v.schedule.warningAt);
+      ctx.printTitle('Рейд гоблинов (village.raid)');
+      ctx.print(`  расписание: каждую ${v.schedule.weekday} в ${v.schedule.hour}:00 (ночь); предвестник ровно за 24 ч`);
+      ctx.print(`  ближайший рейд: ${next.toLocaleString('ru-RU')} (через ${v.schedule.inHours} ч; неделя ${v.schedule.nextWeek})`);
+      ctx.print(`  предвестник ожидается: ${warn.toLocaleString('ru-RU')} — ${v.warning.sent ? 'УЖЕ ОТПРАВЛЕН (разведчик видел огни)' : 'ещё не отправлен'}`);
+      ctx.print(`  порог защиты: ${v.threshold} (уровень деревни ${v.villageLevel}) · суммарная защита: ${v.defense.total} (постройки ${v.defense.buildings} + жители ${Math.round((v.defense.total - v.defense.buildings) * 10) / 10})`);
+      if (v.defense.villagers.length > 0) {
+        ctx.print('  силы жителей:');
+        for (const r of v.defense.villagers) {
+          ctx.print(`    ${r.name} — ${r.item} (${r.tier}/${Math.round(r.value)}${r.sharpening > 0 ? `, заточка ${r.sharpening}` : ''}) → сила ${r.strength}`);
+        }
+      } else {
+        ctx.print('  силы жителей: никто не снаряжён (village equip <villagerId> <itemId>)');
+      }
+      ctx.print(`  склад: защита ${v.warehouseProtection}% (Склад) · в кошельке ${v.walletGold}з (кража ≤ 20% склада cozy-капой)`);
+      if (v.lastResult !== null) {
+        ctx.print(`  прошлый рейд (${v.lastResult.dateISO}, неделя ${v.lastResult.week}): ${v.lastResult.success ? 'ПОБЕДА — кража 0' : `поражение — украдено ${v.lastResult.stolen}з`}`);
+      } else {
+        ctx.print('  прошлый рейд: ещё не было');
+      }
+      if (v.warning.resolvedThisWeek) ctx.print('  рейд этой недели уже разрешён (маркер raid.lastResult)');
+    },
+  });
+
+  registry.register({
+    name: 'village.raid.force',
+    usage: 'village.raid.force',
+    description: 'dev: форс окна рейда по стадиям — предвестник → ночь (после разрешения — отказ маркером; прецедент lake.force)',
+    run(_args, ctx) {
+      const api = ctx.game.modules.get('village')?.api;
+      if (!api) return ctx.printErr('модуль деревни не активен');
+      const r = api['village.raid.force']() as R<{ header: string; lines: string[] }>;
+      if (!r.ok) return ctx.printErr(r.error);
+      ctx.printTitle(r.value.header);
+      for (const line of r.value.lines) ctx.print(`  ${line}`);
       ctx.refresh();
     },
   });

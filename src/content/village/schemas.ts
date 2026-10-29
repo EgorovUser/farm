@@ -137,13 +137,90 @@ export const villageTableSchema = z
 
 export const villageBasesSchema = z
   .object({
-    bases: z.object({ 'village.tax.gold': z.number().int().min(1), 'village.level': z.literal(1) }).strict(),
-    meta: z.object({
-      'village.tax.gold': z.object({ min: z.number().optional(), round: z.enum(['round', 'floor', 'ceil', 'none']).optional() }).strict(),
-      'village.level': z.object({ min: z.number().optional(), round: z.enum(['round', 'floor', 'ceil', 'none']).optional() }).strict(),
-    }).strict(),
+    bases: z
+      .object({
+        'village.tax.gold': z.number().int().min(1),
+        'village.level': z.literal(1),
+        'village.repair.discountPercent': z.literal(0),
+        'village.market.discountPercent': z.literal(0),
+      })
+      .strict(),
+    meta: z
+      .object({
+        'village.tax.gold': z.object({ min: z.number().optional(), round: z.enum(['round', 'floor', 'ceil', 'none']).optional() }).strict(),
+        'village.level': z.object({ min: z.number().optional(), round: z.enum(['round', 'floor', 'ceil', 'none']).optional() }).strict(),
+        'village.repair.discountPercent': z.object({ min: z.number().optional(), round: z.enum(['round', 'floor', 'ceil', 'none']).optional() }).strict(),
+        'village.market.discountPercent': z.object({ min: z.number().optional(), round: z.enum(['round', 'floor', 'ceil', 'none']).optional() }).strict(),
+      })
+      .strict(),
   })
   .strict();
 
 /** dateISO-маркеры (день/неделя) — форма для срезовых полей */
 export const villageDateSchema = z.string().regex(DATE_RE);
+
+// ---------------------------------------------------------------- [M16.2]
+
+const costEntry = z
+  .object({
+    t: z.literal('currency').or(z.literal('item')),
+    id: z.string().regex(ID_RE),
+    qty: z.number().int().min(1).max(999),
+  })
+  .strict();
+
+const buildingLevel = z
+  .object({
+    costGold: z.number().int().min(0).max(100_000),
+    items: z.array(costEntry).max(6),
+    hours: z.number().int().min(1).max(72),
+    effect: z.number().int().min(0).max(100),
+    xp: z.number().int().min(1).max(1000),
+  })
+  .strict();
+
+const buildingKind = z.enum(['house', 'warehouse', 'forge', 'market', 'defense', 'happiness']);
+
+/** карточка §3 — РОВНО 9 зданий; гейт открытия — уровень деревни */
+export const villageBuildingsSchema = z
+  .array(
+    z
+      .object({
+        id: z.string().regex(ID_RE),
+        name: z.string().min(1),
+        desc: z.string().min(1),
+        kind: buildingKind,
+        unlock: z.object({ t: z.literal('statAtLeast'), stat: z.literal('village.level'), value: z.number().int().min(1).max(50) }).strict(),
+        levels: z.tuple([buildingLevel, buildingLevel, buildingLevel]),
+      })
+      .strict(),
+  )
+  .length(9, 'карточка M16 §3: ровно 9 зданий');
+
+/** рейд: предвестник РОВНО за 24 ч; капа кражи ≤ 20% (cozy-инвариант §4) */
+export const villageRaidSchema = z
+  .object({
+    weekday: z.number().int().min(1).max(7),
+    hour: z.number().int().min(20).max(23, 'рейд — НОЧЬЮ (час 20..23)'),
+    warningLeadHours: z.literal(24, 'предвестник РОВНО за 24 ч'),
+    threshold: z.object({ base: z.number().int().min(1).max(1000), perVillageLevel: z.number().int().min(0).max(100) }).strict(),
+    defense: z
+      .object({
+        typeBase: z.record(z.string(), z.number().min(0).max(100)),
+        tierStep: z.number().min(0).max(20),
+        valueFactor: z.number().min(0).max(1),
+        sharpenStep: z.number().min(0).max(10),
+        equippableTypes: z.array(z.string().min(1)).min(1),
+      })
+      .strict(),
+    stolen: z
+      .object({
+        basePercent: z.number().min(0).max(20),
+        perDeficitPoint: z.number().min(0).max(20),
+        capPercent: z.number().min(1).max(20, 'КАПА cozy: кража ≤ 20% склада дня'),
+        currencies: z.tuple([z.literal('gold')]),
+      })
+      .strict(),
+    winHappinessBonus: z.number().int().min(1).max(20),
+  })
+  .strict();

@@ -3,6 +3,7 @@
  * гейта — честное «деревня заперта» с условиями (П6 «гейты не прячутся»);
  * ПОСЛЕ — уровень/XP/жители/счастье/налог-строка с раскладкой модификаторов
  * (шансы и числа — на стол). Потребности — village.need <id|all>.
+ * Витрины M16.2 (постройки/рейд) — view-m162.ts (расщепление по wc-гигиене).
  */
 import type { VillagerDef, VillageTable, VillageTaxTable } from '@/content/village/types';
 import { villageLevelOf, villageXpToNext } from '@/content/village/table';
@@ -44,7 +45,7 @@ export function buildVillageStateView(
   defs: VillagerDef[],
   table: VillageTable,
   tax: VillageTaxTable,
-  deps: { playerLevel(): number; hasFlag(flag: string): boolean; resolveTax(): number; dateISO(): string },
+  deps: { playerLevel(): number; hasFlag(flag: string): boolean; resolveTax(): number; dateISO(): string; aura(): number },
 ): VillageStateView {
   const level = villageLevelOf(state.xp, table.level);
   const xpToNext = level >= table.level.max ? null : villageXpToNext(table.level.baseXp, table.level.growth, level);
@@ -81,7 +82,7 @@ export function buildVillageStateView(
       lastSatisfied: live.lastSatisfied ?? null,
     });
   }
-  const info = taxInfoOf(state, defs, table, tax);
+  const info = taxInfoOf(state, defs, table, tax, deps.aura());
   return {
     unlocked: state.unlocked,
     gateLines: state.unlocked
@@ -149,3 +150,4 @@ export function buildNeedsView(
   }
   return rows;
 }
+

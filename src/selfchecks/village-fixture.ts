@@ -10,6 +10,7 @@
 import { ManualClock } from '@/kernel/di/clock';
 import { MemoryStorage } from '@/kernel/save/storage-drivers';
 import { createGame, type Game } from '@/game/bootstrap';
+import { VILLAGE_TABLE, villageLevelOf } from '@/content/village/table';
 
 export type R<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -114,6 +115,68 @@ export function dayTickAt(f: VillageFixture, plusDays: number): void {
     catchUp: true,
     dateISO: localDateISO(ms),
   });
+}
+
+/** часовой тик в момент ms (граница epoch-часа; catchUp-класс — тот же
+ * контракт, что time-service/offline-catchup: {hourIndex, now, catchUp}) */
+export function hourTickAt(f: VillageFixture, ms: number): void {
+  f.clock.set(ms);
+  f.game.bus.publish('time.hourTick', {
+    hourIndex: Math.floor(ms / 3_600_000),
+    now: ms,
+    catchUp: true,
+    crossed: [],
+  });
+}
+
+/** [M16.2] форма среза деревни (ленивые вложенные ключи — опциональны) */
+export interface VillageSliceShape {
+  unlocked: boolean;
+  xp: number;
+  villagers: Record<string, {
+    happiness: number;
+    grumbleDays: number;
+    lastSatisfied?: string;
+    need?: { item: string; qty: number; kind: string; day: string };
+  }>;
+  helpLastDay: string | null;
+  buildings?: Record<string, { level: number; builtAt?: string }>;
+  construction?: Record<string, { finishAt: number }>;
+  equipped?: Record<string, { defId: string; tier: string; value: number; sharpening: number }>;
+  raid?: { week: string; warned: boolean; lastResult?: { success: boolean; stolen: number; dateISO: string; week: string } };
+}
+
+/** [M16.2] срез деревни из файла сейва (undefined — ключа нет: до гейта) */
+export async function readVillageSlice(f: VillageFixture): Promise<VillageSliceShape | undefined> {
+  await f.game.save.save();
+  const raw = JSON.parse((await f.storage.get('main')) as string) as { modules: Record<string, unknown> };
+  return raw.modules['village'] as VillageSliceShape | undefined;
+}
+
+/** [M16.2] удовлетворить все неудовлетворённые потребности текущего дня
+ *  (поставки копят XP деревне; onlyDaily — шаг +8 для контролируемого XP) */
+export async function satisfyVillageNeeds(f: VillageFixture, onlyDaily = false, xpBudget = Number.POSITIVE_INFINITY): Promise<void> {
+  const slice = await readVillageSlice(f);
+  const today = localDateISO(f.clock.now());
+  for (const [id, lv] of Object.entries(slice?.villagers ?? {})) {
+    if (lv.need === undefined || lv.lastSatisfied === today) continue;
+    if (onlyDaily && lv.need.kind !== 'daily') continue;
+    if ((slice?.xp ?? 0) + (lv.need.kind === 'weekly' ? 30 : 8) > xpBudget) continue;
+    giveItems(f, lv.need.item, lv.need.qty);
+    const r = f.village['village.supply'](id, lv.need.item) as R<unknown>;
+    if (!r.ok) throw new Error(`supply ${id}: ${r.error}`);
+  }
+}
+
+/** [M16.2] поднять деревню до уровня ≥ 2 поставками (честный путь XP) */
+export async function raiseVillageToLevel2(f: VillageFixture): Promise<void> {
+  for (let day = 0; day < 8; day++) {
+    const slice = await readVillageSlice(f);
+    if (villageLevelOf(slice?.xp ?? 0, VILLAGE_TABLE.level) >= 2) return;
+    await satisfyVillageNeeds(f);
+    dayTickAt(f, day + 1);
+  }
+  throw new Error('raiseVillageToLevel2: уровень 2 не достигнут за 8 дней');
 }
 
 /** открыть гейт ЧЕСТНЫМ путём: XP до 30+ и dev-unlock «Мастера хутора» */
