@@ -102,6 +102,12 @@ import { PASSIVES_POINTS } from '@/content/passives/points';
 import { PASSIVES_RESPEC } from '@/content/passives/respec';
 import { PASSIVES_BASES_TABLE } from '@/content/passives/bases';
 import { passivesPointsSchema, passivesRespecSchema, passivesTreeSchema } from '@/content/passives/schemas';
+// [M17] контент соц-заглушек: шаблоны доски новостей/писем дня + состав
+// профиля (бриф G2–G4: всё — данные; логика — обобщённые проекции)
+import { SOCIAL_NEWS } from '@/content/social/news';
+import { SOCIAL_MAIL } from '@/content/social/mail';
+import { SOCIAL_PROFILE } from '@/content/social/profile';
+import { socialMailTableSchema, socialNewsTableSchema, socialProfileTableSchema } from '@/content/social/schemas';
 // [M16.1] контент деревни: жители/потребности/налог/подарки/помощь + баланс
 // (бриф §0 «Леджер прав»; карточка M16 §2–§3; числа — только здесь, П1/П6)
 import { VILLAGERS } from '@/content/village/villagers';
@@ -287,4 +293,10 @@ export function registerContent(content: ContentRegistry): void {
   content.register('village.raid', villageRaidSchema, VILLAGE_RAID);
   // [M16.3] таблица биржи (zod: 5–7 партнёров, шкала ×4, −5%/−15% каноны 04)
   content.register('village.trade', villageTradeSchema, VILLAGE_TRADE);
+  // --- контент M17 (бриф G2–G4: доска новостей/письма дня/профиль — данные,
+  //     П1; выбор заметок/писем — dailySeed-потоки social-board/social-letters
+  //     в modules/social/logic.ts — суффиксы НЕ пересекаются с существующими)
+  content.register('social.news', socialNewsTableSchema, SOCIAL_NEWS);
+  content.register('social.mail', socialMailTableSchema, SOCIAL_MAIL);
+  content.register('social.profile', socialProfileTableSchema, SOCIAL_PROFILE);
 }

@@ -28,6 +28,8 @@ import { registerMineCommands } from './commands-mine';
 import { registerPassivesCommands } from './commands-passives';
 // [M16.1] команды деревни: state/need/supply/help + dev force (карточка §6)
 import { registerVillageCommands } from './commands-village';
+// [M17] команды соц-заглушек: board/mail[ read]/profile + dev force (бриф G1–G3)
+import { registerSocialCommands } from './commands-social';
 // [REG-1] живой реестр: агрегатор рантайм-реестров (модули/шины/сервисы/
 // команды/контент) — списки расширяются сами, без ручных таблиц
 import { registerRegistryCommands } from './commands-registry';
@@ -62,6 +64,7 @@ export function getCommandRegistry(): CommandRegistry {
     registerMineCommands(registry); // [M12] команды шахты: state/mob/fight/elite + --seed golden (карточка §6, бриф F8)
     registerPassivesCommands(registry); // [M14] команды пассивок: points/tree/alloc/refund/canreach/reset (бриф F7)
     registerVillageCommands(registry); // [M16.1] команды деревни: state/need/supply/help/force (карточка §6)
+    registerSocialCommands(registry); // [M17] команды соц-заглушек: board/mail[ read]/profile + dev force (бриф G1–G3)
     registerQuestsCommands(registry); // [M15] команды квестов/ачивок (бриф §4.6: roll/list/complete/claim/reroll, ach unlock, flags list)
     registerRegistryCommands(registry); // [REG-1] живой реестр: модули M01–M15/шины/сервисы/команды/контент из рантайма
   }

@@ -51,6 +51,9 @@ import { runMineHelpersChecks } from './mine-helpers-checks';
 import { runPassivesChecks } from './passives-checks';
 // [M16.1] деревня — гейт/жители/потребности/счастье/налоги/подарки/помощь (бриф G9)
 import { runVillageChecks } from './village-checks';
+// [M17] соц-заглушки — доска/письма/профиль: замок/детерминизм/нейтральность/
+// roundtrip/реестр (бриф G6 — НОВАЯ группа, прецедент M12/M14/M16)
+import { runSocialChecks } from './social-checks';
 // [REG-1] живой реестр: агрегатор рантайм-реестров (модули/шины/сервисы/
 // команды/контент) — списки расширяются сами (запрос спеки между M12.1 и M12.2)
 import { runRegistryChecks } from './registry-checks';
@@ -143,6 +146,9 @@ export async function runAllSelfChecks(): Promise<CheckGroup[]> {
     // --- M16 «Деревня» (сеанс M16.1 — гейт + жители/потребности/счастье/
     //     налоги/подарки/помощь; НОВАЯ группа — прецедент M12/M14)
     await runVillageChecks(),
+    // --- M17 «Соц» (сеанс M17.1 — доска/письма/профиль: витринные проекции;
+    //     НОВАЯ группа — бриф G6)
+    await runSocialChecks(),
     // --- Реестр (сеанс REG-1): живой обзор — модули M01–M15/шины/сервисы/
     //     команды/контент без ручных списков (агрегатор registry-overview)
     await runRegistryChecks(),

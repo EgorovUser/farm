@@ -34,6 +34,15 @@ import { PassivesModule } from './modules/passives/module';
 // [M16.1] Деревня: монтаж ПОСЛЕ passives ДО quests (бриф §0 — ЯВНО
 // санкционировано, прецедент M14.1)
 import { VillageModule } from './modules/village/module';
+// [M17] Соц-заглушки: монтаж ПОСЛЕ village ДО quests (бриф G1 —
+// санкционированная строка; витринная проекция над publicApi деревни)
+import { SocialModule } from './modules/social/module';
+import type {
+  SocialBuildingsVitrine,
+  SocialRaidVitrine,
+  SocialTradeVitrine,
+  SocialVillageStateVitrine,
+} from './modules/social/deps';
 import { QuestsModule } from './modules/quests/module';
 import type { DeliverReceipt } from './modules/shop/purchase';
 import type { PlayerTable } from '@/content/player/progression';
@@ -858,6 +867,67 @@ export function wireGameModules(
     }),
   );
   director.activate('village');
+
+  // --- M17 «Соц-заглушки» (фаза 5): монтаж ПОСЛЕ village ДО quests (бриф
+  //     SESSION-M17 G1 — санкционированная строка). ЧИСТЫЙ модуль-проекция:
+  //     событий/подписок/провайдеров/счётчиков/задач — 0 (нейтральность
+  //     экономики — замок done-критерия Фазы 5); чтение деревни — ТОЛЬКО
+  //     через deps-витрины publicApi village (П4: modules/village НЕ
+  //     импортируется и НЕ правится — нехватка данных → [QUESTION]);
+  //     профиль — витрины player/quests; золото — кошелёк app-шва.
+  modules.register(
+    new SocialModule({
+      playerLevel: () =>
+        Number((modules.call('player', 'player.ctxExtras') as Record<string, unknown> | null ?? {})['player:level'] ?? 0),
+      playerProgress: () => {
+        const snap = (modules.call('player', 'player.snapshot') ?? {
+          progress: { level: 1, xp: 0, xpNeed: 100 },
+        }) as { progress: { level: number; xp: number; xpNeed: number } };
+        return snap.progress;
+      },
+      walletGold: () => wallet.get('gold'),
+      skills: () =>
+        ((modules.call('player', 'player.snapshot') ?? { skills: [] }) as {
+          skills: Array<{ id: string; name: string; level: number }>;
+        }).skills,
+      achievements: () => {
+        // полный пул из контента (62 — включая hidden; quests.list('ach')
+        // скрывает их) + счёт открытых по гейт-ключам quests (все, и hidden)
+        const pool = content.get<Array<{ id: string }>>('quests.achievements').length;
+        const extras = (modules.call('quests', 'quests.gateExtras') ?? {}) as Record<string, unknown>;
+        const unlocked = Object.keys(extras).filter((k) => k.startsWith('achievement:')).length;
+        return { unlocked, pool };
+      },
+      villageState: () =>
+        (modules.call('village', 'village.state') ?? {
+          unlocked: false,
+          gateLines: ['деревня недоступна (модуль не активен)'],
+          level: 0,
+          levelMax: 25,
+          xp: 0,
+          tax: { expectedGold: 0, level: 0, avgHappiness: 50, grumblers: 0 },
+          villagers: [],
+          villagersLocked: [],
+        }) as SocialVillageStateVitrine,
+      villageTrade: () =>
+        (modules.call('village', 'village.trade') ?? {
+          contracts: [],
+          trends: [],
+          reputation: [],
+        }) as SocialTradeVitrine,
+      villageRaid: () =>
+        (modules.call('village', 'village.raid') ?? {
+          schedule: { weekday: '—', hour: 23, inHours: 0 },
+          warning: { sent: false, resolvedThisWeek: false },
+          lastResult: null,
+        }) as SocialRaidVitrine,
+      villageBuildings: () =>
+        (modules.call('village', 'village.build') ?? {
+          rows: [],
+        }) as SocialBuildingsVitrine,
+    }),
+  );
+  director.activate('social');
 
   // --- M15 «Квесты» (фаза 2): активируется ПОСЛЕДНИМ — подписки движка
   //     встают после CountersEngine M01 (счётчики подняты до переоценки);

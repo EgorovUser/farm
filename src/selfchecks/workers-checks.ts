@@ -214,7 +214,7 @@ export async function runWorkersChecks(): Promise<CheckGroup> {
     const manifest = f.game.modules.get('workers')?.manifest;
     const api = Object.keys(f.workers).sort();
     tail.push(
-      check('манифест M11 = факту (F16 — ОДИН bump 1.0.0 → 1.1.0): version 1.1.0; publicApi РОВНО ×8 (board/list/hire/fire/bonus + upgrades/last + dev); eventsPublished РОВНО ×5 = [worker.hired, worker.fired, worker.sick, worker.payday, worker.actionDone] (каталог 02 §4 — строка с фазы 0, каталог НЕ редактировался); eventsSubscribed [time.dayTick, time.hourTick] (worker.tick — M11.2); modifierProviders [worker.traits]; taskExecutors ПУСТЫ (работник ВЫЗЫВАЕТ чужих исполнителей — сам НЕ регистрирует); save info: версия 15 (bump M12.1 — срез mine), срезов 21 (+workers +mine +passives [M14 · ленивый срез] +village [M16.1 · ленивый срез])', () =>
+      check('манифест M11 = факту (F16 — ОДИН bump 1.0.0 → 1.1.0): version 1.1.0; publicApi РОВНО ×8 (board/list/hire/fire/bonus + upgrades/last + dev); eventsPublished РОВНО ×5 = [worker.hired, worker.fired, worker.sick, worker.payday, worker.actionDone] (каталог 02 §4 — строка с фазы 0, каталог НЕ редактировался); eventsSubscribed [time.dayTick, time.hourTick] (worker.tick — M11.2); modifierProviders [worker.traits]; taskExecutors ПУСТЫ (работник ВЫЗЫВАЕТ чужих исполнителей — сам НЕ регистрирует); save info: версия 15 (bump M12.1 — срез mine), срезов 22 (+workers +mine +passives [M14 · ленивый срез] +village [M16.1 · ленивый срез] +social [M17 · ленивый срез])', () =>
         manifest !== undefined &&
         manifest.version === '1.1.0' &&
         JSON.stringify([...(manifest.publicApi ?? [])].sort()) === JSON.stringify(['workers.board', 'workers.bonus', 'workers.dev', 'workers.fire', 'workers.hire', 'workers.last', 'workers.list', 'workers.upgrades']) &&
@@ -226,8 +226,8 @@ export async function runWorkersChecks(): Promise<CheckGroup> {
         JSON.stringify(manifest.modifierProviders) === JSON.stringify(['worker.traits']) &&
         (manifest.taskExecutors ?? []).length === 0 &&
         api.length === 8 &&
-        info.saveVersion === 15 && info.slices.length === 21 && info.slices.includes('workers') && info.slices.includes('passives') && info.slices.includes('village'), {
-        expected: '1.1.0; api ×8; события ×5 ровно; подписки ×2; провайдер [worker.traits]; v15/21 срез',
+        info.saveVersion === 15 && info.slices.length === 22 && info.slices.includes('workers') && info.slices.includes('passives') && info.slices.includes('village') && info.slices.includes('social'), {
+        expected: '1.1.0; api ×8; события ×5 ровно; подписки ×2; провайдер [worker.traits]; v15/22 срез',
         actual: `v${manifest?.version}; api ${api.length}; события ${(manifest?.eventsPublished ?? []).length}; срезов ${info.slices.length}; версия ${info.saveVersion}`,
       }),
     );
