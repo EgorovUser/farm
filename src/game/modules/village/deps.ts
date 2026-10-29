@@ -49,4 +49,8 @@ export interface VillageModuleDeps {
   forgeLevelOf(iid: string): number;
   /** [M16.2 · G5] золото кошелька на момент рейда («склад дня» кражи) */
   walletGold(): number;
+  /** [M16.3 · G6] покупка уникального товара: выдача с РОЛЛОМ качества —
+   *  канал inventory.acquire (паттерн deliverItem магазина C4; после
+   *  D23-пробы гарантирован); source — для журнала */
+  acquireItem(defId: string, qty: number, source: string): Result<{ iids: string[]; entries: number; quality: { tier: string; value: number } }>;
 }

@@ -245,7 +245,7 @@ export async function runVillagePart2(): Promise<CheckResult[]> {
     f2.dispose();
   }
 
-  // 14. манифест = факту (бриф M16.2 §0/G6: 1.1.0; eventsPublished ровно ×3; tasks 15)
+  // 14. манифест = факту (бриф M16.3 §0/G8: 1.2.0; eventsPublished ровно ×5; tasks 15)
   {
     const f = await makeSeededVillageGame('v161-manifest');
     const m = f.game.modules.get('village');
@@ -253,7 +253,7 @@ export async function runVillagePart2(): Promise<CheckResult[]> {
     const api = f.village;
     const manifestOk =
       m !== null &&
-      m.manifest.version === '1.1.0' &&
+      m.manifest.version === '1.2.0' &&
       m.manifest.stateKey === 'village' &&
       JSON.stringify(m.manifest.publicApi) ===
         JSON.stringify([
@@ -266,21 +266,27 @@ export async function runVillagePart2(): Promise<CheckResult[]> {
           'village.equip',
           'village.raid',
           'village.raid.force',
+          'village.trade',
+          'village.trade.fulfill',
+          'village.trade.buy',
+          'village.trade.trend.force',
         ]) &&
-      JSON.stringify(m.manifest.eventsPublished) === JSON.stringify(['village.taxCollected', 'village.raidWarning', 'village.raidResolved']) &&
+      JSON.stringify(m.manifest.eventsPublished) ===
+        JSON.stringify(['village.taxCollected', 'village.raidWarning', 'village.raidResolved', 'trade.fulfilled', 'village.reputationChanged']) &&
       JSON.stringify(m.manifest.eventsSubscribed) ===
         JSON.stringify([
           { event: 'time.dayTick', handler: 'onDayTick' },
           { event: 'time.hourTick', handler: 'onHourTick' },
         ]) &&
       JSON.stringify(m.manifest.modifierProviders) === JSON.stringify(['villageProvider']) &&
+      JSON.stringify(m.manifest.priceModifierProviders) === JSON.stringify(['village.trade']) &&
       JSON.stringify(m.manifest.taskExecutors) === JSON.stringify(['village-helper']) &&
-      JSON.stringify(m.manifest.statsCounters) === JSON.stringify([]);
+      JSON.stringify(m.manifest.statsCounters) === JSON.stringify(['trade.count', 'trade.volume']);
     results.push(
       check(
-        'манифест = факту (01 §9; bump 1.0.0 → 1.1.0 по факту M16.2): version 1.1.0; publicApi РОВНО ×9 (state/need/supply/help/force + build/equip/raid/raid.force — имена ТОЧЕЧНЫЕ); eventsPublished РОВНО ×3: village.taxCollected + village.raidWarning + village.raidResolved (строки каталога 02 §4 — касса Task 84, каталог сеансом НЕ редактировался); eventsSubscribed ×2 time (dayTick + hourTick); modifierProviders [villageProvider] (эффекты зданий — расширение, НОВЫХ провайдеров НЕТ); taskExecutors [village-helper] — реестр задач 15 жив (mine.assist — контракт-слот [DECISION M162-бой]); statsCounters []',
-        () => manifestOk && tasks.length === 15 && Object.keys(api).length === 9,
-        { expected: '1.1.0 / ×9 / ×3 / tasks 15', actual: `${m?.manifest.version ?? '—'} / api ×${Object.keys(api).length} / tasks ${tasks.length}` },
+        'манифест = факту (01 §9; bump 1.1.0 → 1.2.0 по факту M16.3): version 1.2.0; publicApi РОВНО ×13 (state/need/supply/help/force + build/equip/raid/raid.force + trade/trade.fulfill/trade.buy/trade.trend.force — имена ТОЧЕЧНЫЕ); eventsPublished РОВНО ×5: village.taxCollected + village.raidWarning + village.raidResolved + trade.fulfilled + village.reputationChanged (строки каталога 02 §4 — касса Task 84, каталог сеансом НЕ редактировался); eventsSubscribed ×2 time (dayTick + hourTick); modifierProviders [villageProvider] (НОВЫХ stat-провайдеров НЕТ); priceModifierProviders [village.trade] (PriceBus биржи — тег trade); taskExecutors [village-helper] — реестр задач 15 жив (mine.assist — контракт-слот [DECISION M162-бой]); statsCounters [trade.count, trade.volume] (конфиг ядра M01 §6 ждал событие trade.fulfilled {gold} с фазы 0)',
+        () => manifestOk && tasks.length === 15 && Object.keys(api).length === 13,
+        { expected: '1.2.0 / ×13 / ×5 / tasks 15', actual: `${m?.manifest.version ?? '—'} / api ×${Object.keys(api).length} / события ${(m?.manifest.eventsPublished ?? []).length} / tasks ${tasks.length}` },
       ),
     );
     f.dispose();

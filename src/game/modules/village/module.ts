@@ -5,17 +5,24 @@
  * времени), снаряжение жителей (village.equip, снапшот качества/заточки),
  * рейды (еженедельная ночь, предвестник ровно за 24 ч, расчёт защиты vs
  * порог, кража ≤ 20% склада, village.raidLoss) + события raid-пары.
+ * M16.3 (карточка §5): БИРЖА — партнёры/контракты дня (dailySeed,
+ * маркер day)/тренды/репутация (village.reputationChanged ×1 на уровень)/
+ * уникальные товары (гейт репутации)/история цен (кольцевой буфер) +
+ * PriceBus-провайдер village.trade (тег trade; премия контракта sellBonus,
+ * тренды ±, «Друг деревни» −5%, потребитель Рынка 5/8/10) + события
+ * trade.fulfilled { gold } (счётчики trade.count/trade.volume — M01 §6).
  *
  * Изоляция (01 §5–§7): модуль НЕ импортирует чужие модули — все каналы
  * колбэками app-слоя (deps.ts). Подписки времени: dayTick (налог/ролл/
- * ворчание) + hourTick (таймеры построек, окно рейда; catchUp публикует
- * те же границы — идемпотентность маркерами construction/need.day/
- * raid.week/lastResult.week).
+ * ворчание + ротация дня биржи) + hourTick (таймеры построек, окно рейда;
+ * catchUp публикует те же границы — идемпотентность маркерами
+ * construction/need.day/raid.week/lastResult.week/trade.day).
  */
 import type { GameModule, ModuleContext } from '@/game/module-registry';
 import type {
   VillageBuildingDef,
   VillageRaidTable,
+  VillageTradeTable,
   VillagerDef,
   VillageGiftsTable,
   VillageHelpTable,
@@ -23,6 +30,7 @@ import type {
   VillageTable,
   VillageTaxTable,
 } from '@/content/village/types';
+import { premiumWithTrend, reputationLevelOf, reputationLevelName } from '@/content/village/trade';
 import { checkCondition } from '@/shared/utils/condition-check';
 import { createVillageManifest } from './manifest';
 import { defaultVillageState, villageSaveSlice, type VillageEquipState, type VillageState } from './state';
@@ -34,8 +42,10 @@ import {
   taxInfoOf,
 } from './logic';
 import { makeVillageProvider, VILLAGE_PROVIDER_ID } from './provider';
+import { makeVillageTradeProvider, VILLAGE_TRADE_PROVIDER_ID } from './trade-provider';
 import { buildNeedsView, buildVillageStateView } from './view';
 import { buildRaidView, buildBuildingsView } from './view-m162';
+import { buildTradeView, findPartner } from './view-m163';
 import { runVillageHelp, type HelpReceipt } from './help';
 import type { VillageModuleDeps } from './deps';
 import type { Result } from '@/shared/types/result';
@@ -43,6 +53,7 @@ import { err, ok } from '@/shared/types/result';
 import type { CurrencyId } from '@/shared/types/ids';
 import { QUALITY_TIERS } from '@/shared/types/ids';
 import type { QualityTier } from '@/shared/types/ids';
+import type { PriceCtx, PricedItemDef } from '@/kernel/bus/price-bus/price-bus';
 import {
   applyBuildStart,
   buildingDefenseOf,
@@ -65,6 +76,7 @@ import {
   warningAtOf,
   type RaidOutcome,
 } from './raid';
+import { ensureTradeDay, planContractTake, pushHistory, reputationPointsOf, rerollTradeDay } from './trade';
 
 export interface SupplyReceipt {
   header: string;
@@ -87,10 +99,12 @@ export class VillageModule implements GameModule {
   private helpTable: VillageHelpTable | null = null;
   private buildingDefs: VillageBuildingDef[] = [];
   private raidTable: VillageRaidTable | null = null;
+  private tradeTable: VillageTradeTable | null = null;
   private markDirty: () => void = () => {};
   private bus: ModuleContext['bus'] | null = null;
   private transaction: ModuleContext['transaction'] | null = null;
   private statBus: ModuleContext['statBus'] | null = null;
+  private priceBus: ModuleContext['priceBus'] | null = null;
   private time: ModuleContext['time'] | null = null;
   private rngBus: ModuleContext['rngBus'] | null = null;
   private content: ModuleContext['content'] | null = null;
@@ -102,7 +116,7 @@ export class VillageModule implements GameModule {
   }
 
   activate(ctx: ModuleContext): void {
-    const { save, content, statBus, bus, transaction, time, rngBus, tasks } = ctx;
+    const { save, content, statBus, bus, transaction, time, rngBus, tasks, priceBus } = ctx;
     this.defs = content.get<VillagerDef[]>('village.villagers');
     this.pools = content.get<VillageNeedsTable>('village.needs');
     this.table = content.get<VillageTable>('village');
@@ -111,9 +125,11 @@ export class VillageModule implements GameModule {
     this.helpTable = content.get<VillageHelpTable>('village.help');
     this.buildingDefs = content.get<VillageBuildingDef[]>('village.buildings');
     this.raidTable = content.get<VillageRaidTable>('village.raid');
+    this.tradeTable = content.get<VillageTradeTable>('village.trade');
     this.bus = bus;
     this.transaction = transaction;
     this.statBus = statBus;
+    this.priceBus = priceBus;
     this.time = time;
     this.rngBus = rngBus;
     this.content = content;
@@ -122,11 +138,16 @@ export class VillageModule implements GameModule {
 
     save.registerSlice(
       'village',
-      villageSaveSlice(() => this.state, (s) => { this.state = s; }, this.defs, this.buildingDefs),
+      villageSaveSlice(() => this.state, (s) => { this.state = s; }, this.defs, this.buildingDefs, this.tradeTable!),
     );
 
     statBus.registerProvider(
       makeVillageProvider(() => this.state, this.defs, this.table!, this.taxTable!, this.buildingDefs),
+    );
+
+    // [M16.3] PriceBus-провайдер биржи (тег trade — биржа-скоуп, 04 §5)
+    priceBus.registerProvider(
+      makeVillageTradeProvider(() => this.state, this.tradeTable!, this.buildingDefs),
     );
 
     // подписки манифеста: time-события (dayTick жив M16.1 + hourTick M16.2:
@@ -144,6 +165,7 @@ export class VillageModule implements GameModule {
       offDay();
       offHour();
       statBus.unregisterProvider(VILLAGE_PROVIDER_ID);
+      priceBus.unregisterProvider(VILLAGE_TRADE_PROVIDER_ID);
     };
 
     this.api = {
@@ -162,6 +184,14 @@ export class VillageModule implements GameModule {
       'village.raid': () => this.raidView(),
       // dev: форс окна рейда «предвестник → ночь» по стадиям (см. forceRaid)
       'village.raid.force': (): Result<SupplyReceipt> => this.forceRaid(),
+      // --- M16.3 (биржа: витрина/исполнение/покупка + dev-реролл дня)
+      'village.trade': () => this.tradeView(),
+      'village.trade.fulfill': (partner: unknown, item?: unknown): Result<SupplyReceipt> =>
+        this.fulfillContract(partner === undefined ? '' : String(partner), item === undefined ? undefined : String(item)),
+      'village.trade.buy': (partner: unknown, item: unknown, qty?: unknown): Result<SupplyReceipt> =>
+        this.buyGood(partner === undefined ? '' : String(partner), item === undefined ? '' : String(item), qty === undefined ? 1 : Number(qty)),
+      // dev: реролл контрактов/трендов дня (сид-суффикс #N)
+      'village.trade.trend.force': (): Result<SupplyReceipt> => this.forceTradeReroll(),
     };
   }
 
@@ -228,6 +258,8 @@ export class VillageModule implements GameModule {
       this.state = r.state;
       this.markDirty();
       this.bus!.publish('invalidate.stat', {});
+      // [M16.3] Рынок меняет цены биржи (discountLocal) — кэш цен тоже
+      this.bus!.publish('invalidate.price', {});
       this.ensureVillagers(); // XP постройки мог поднять уровень — новые жители
     }
     return r.completed;
@@ -301,6 +333,13 @@ export class VillageModule implements GameModule {
     if (pass.processed) {
       this.markDirty();
       this.bus!.publish('invalidate.stat', {});
+    }
+    // [M16.3] ротация дня биржи (после dayPass — маркер day; реплей того
+    // же дня НЕ переролливает — идемпотентность catchUp/dayTick)
+    const rotated = this.ensureTradeOfDay(dateISO);
+    if (rotated) {
+      this.markDirty();
+      this.bus!.publish('invalidate.price', {});
     }
   }
 
@@ -612,6 +651,255 @@ export class VillageModule implements GameModule {
     }
     lines.push(`событие village.raidResolved {success: ${outcome.success}, stolen: ${outcome.stolenGold}} в ленте; витрина — village.raid`);
     return ok({ header: `Форс ночи рейда (dev): неделя ${week}`, lines });
+  }
+
+  // ------------------------------------------------------------ биржа (M16.3, G3–G7)
+
+  /** ротация дня биржи (лениво — витрина/действие/dayTick); true —
+   *  прокатилась ротация (вызывающий публикует invalidate.price) */
+  private ensureTradeOfDay(dateISO = this.today()): boolean {
+    if (!this.state.unlocked) return false;
+    const r = ensureTradeDay(this.state, this.tradeTable!, { saveId: () => this.deps.saveId() }, dateISO);
+    if (!r.rotated) return false;
+    this.state = r.state;
+    return true;
+  }
+
+  /** PricedItemDef предмета (каталог items; валюты биржей не торгуют) */
+  private itemPricedOf(defId: string): PricedItemDef | undefined {
+    return this.content!.get<PricedItemDef[]>('items').find((d) => d.id === defId);
+  }
+
+  /** sell-цена единицы контракта (премия — sellBonus провайдера; тег trade).
+   *  [M163-ДЕФЕКТ-1 · кэш PriceBus]: ctx.extra НЕ входит в ключ кэша шины
+   *  (ядро заморожено) — партнёр/контракт различаются ТЕГАМИ (входят в ключ):
+   *  ['trade', 'partner:<id>', 'contract'] — провокации кэша исключены */
+  private contractUnitPrice(defId: string, tier: string | null, partnerId: string): number {
+    const priced = this.itemPricedOf(defId);
+    if (priced === undefined) return 0;
+    const ctx: PriceCtx = {
+      buyer: 'player',
+      now: this.now(),
+      tags: ['trade', `partner:${partnerId}`, 'contract'],
+      extra: { partner: partnerId, contract: true },
+    };
+    return this.priceBus!.sellPrice(priced, {
+      qualityTier: tier !== null && QUALITY_TIERS.includes(tier as QualityTier) ? (tier as QualityTier) : null,
+      ctx,
+    }).final;
+  }
+
+  /** buy-цена уникального товара партнёра + расшифровка (04 §6.6); тег
+   *  partner:<id> — раздельные кэш-ключи по партнёрам (см. дефект кэша) */
+  private goodPrice(defId: string, partnerId: string): { final: number; applied: string[] } {
+    const priced = this.itemPricedOf(defId);
+    if (priced === undefined) return { final: 0, applied: [] };
+    const ctx: PriceCtx = { buyer: 'player', now: this.now(), tags: ['trade', `partner:${partnerId}`], extra: { partner: partnerId } };
+    const bd = this.priceBus!.buyPrice(priced, { ctx });
+    return {
+      final: bd.final,
+      applied: bd.applied.map((m) => `${m.kind === 'markup' ? '+' : '−'}${m.value}% ${m.label}`),
+    };
+  }
+
+  /** худший экземпляр предмета в рюкзаке (D25; null — нет) */
+  private worstTierOf(defId: string): string | null {
+    const rows = this.deps.listBackpack().filter((e) => e.defId === defId && e.qty > 0);
+    if (rows.length === 0) return null;
+    const order = ['D', 'C', 'B', 'A', 'S', 'SS'];
+    return [...rows].sort((a, b) => order.indexOf(a.tier) - order.indexOf(b.tier) || a.value - b.value)[0]!.tier;
+  }
+
+  private tradeView() {
+    this.ensureOpen();
+    this.ensureVillagers();
+    this.ensureConstructions();
+    if (this.ensureTradeOfDay()) this.bus!.publish('invalidate.price', {});
+    return buildTradeView(this.state, this.tradeTable!, {
+      dateISO: () => this.today(),
+      itemName: (defId) => this.itemName(defId),
+      contractUnitPrice: (defId, tier, partnerId) => this.contractUnitPrice(defId, tier, partnerId),
+      goodPrice: (defId, partnerId) => this.goodPrice(defId, partnerId),
+      worstTierOf: (defId) => this.worstTierOf(defId),
+      marketDiscount: () =>
+        this.statBus!.resolve({ stat: 'village.market.discountPercent', ctx: this.time!.ctx('player') }),
+    });
+  }
+
+  /** [DECISION M163-контракты] исполнение контракта дня: TransactionService
+   *  costs=[предмет ×qty] grants=[золото Σ sellPrice худших-вперёд D25];
+   *  событие trade.fulfilled { gold } ×1 (счётчики M01 §6); очки репутации
+   *  + pointsPerContract; смена уровня → village.reputationChanged ×1 */
+  private fulfillContract(partnerId: string, expectedItem?: string): Result<SupplyReceipt> {
+    if (!this.ensureOpen()) return err(GATE_MSG);
+    if (this.ensureTradeOfDay()) this.bus!.publish('invalidate.price', {});
+    const partner = findPartner(this.tradeTable!, partnerId);
+    if (partner === undefined) {
+      return err(`неизвестный партнёр: ${partnerId} (trade — доска биржи)`);
+    }
+    const dateISO = this.today();
+    const points = reputationPointsOf(this.state, partner.id, this.tradeTable!);
+    const level = reputationLevelOf(this.tradeTable!, points);
+    if (level < partner.contractMinLevel) {
+      return err(
+        `контракты «${partner.name}» — гейт репутации: нужен уровень «${this.tradeTable!.reputation.levels[partner.contractMinLevel]!.name}» (сейчас «${reputationLevelName(this.tradeTable!, points)}», очков ${points})`,
+      );
+    }
+    if (this.state.trade?.fulfilled[partner.id] === dateISO) {
+      return err(`контракт «${partner.name}» уже исполнен (${dateISO}) — новый завтра (маркер trade.fulfilled)`);
+    }
+    const c = this.state.trade?.contracts[partner.id];
+    if (c === undefined) return err(`у «${partner.name}» нет контракта сегодня (trade — доска)`);
+    if (expectedItem !== undefined && expectedItem !== c.item) {
+      return err(`чужой день: «${partner.name}» сегодня просит ${c.item} ×${c.qty} (предложено ${expectedItem}) — контракт сменился в полночь`);
+    }
+    const take = planContractTake(this.deps.listBackpack(), c.item, c.qty);
+    if (take === null) {
+      const have = this.deps.listBackpack().filter((e) => e.defId === c.item).reduce((s, e) => s + e.qty, 0);
+      return err(`нет предмета: ${this.itemName(c.item)} — в рюкзаке ${have}, нужно ${c.qty} (inv list)`);
+    }
+    let payout = 0;
+    for (const inst of take) payout += this.contractUnitPrice(c.item, inst.tier, partner.id);
+    const tx = this.transaction!.transact({
+      costs: [{ t: 'item', defId: c.item, qty: c.qty }],
+      grants: [{ t: 'currency', id: 'gold', qty: payout }],
+      eventId: 'village.trade',
+      reason: `контракт дня «${partner.name}»: ${c.item} ×${c.qty} (премия ${premiumWithTrend(c.premiumPercent, this.state.trade?.trends[c.item], this.tradeTable!.trends.contractSwingPercent)}% к ставке скупки)`,
+    });
+    if (!tx.ok) return err(`контракт не исполнен: ${tx.error}`);
+
+    // очки репутации + маркер исполнения + история (до событий — состояние)
+    const gained = this.tradeTable!.reputation.pointsPerContract;
+    const newPoints = points + gained;
+    const newLevel = reputationLevelOf(this.tradeTable!, newPoints);
+    const reputation = { ...(this.state.reputation ?? {}) };
+    reputation[partner.id] = { points: newPoints };
+    const trade = this.state.trade!;
+    this.state = pushHistory(
+      {
+        ...this.state,
+        reputation,
+        trade: { ...trade, fulfilled: { ...trade.fulfilled, [partner.id]: dateISO } },
+      },
+      this.tradeTable!,
+      { day: dateISO, defId: c.item, kind: 'contract', unit: Math.max(1, Math.round(payout / c.qty)), qty: c.qty },
+    );
+    this.markDirty();
+
+    // событие контракта ×1 (каталог 02 §4 «деревня M16»; gold — для счётчиков)
+    this.bus!.publish('trade.fulfilled', {
+      partner: partner.id,
+      partnerName: partner.name,
+      item: c.item,
+      qty: c.qty,
+      gold: payout,
+      unit: Math.max(1, Math.round(payout / c.qty)),
+      premiumPercent: premiumWithTrend(c.premiumPercent, this.state.trade?.trends[c.item], this.tradeTable!.trends.contractSwingPercent),
+      day: dateISO,
+    });
+    // событие репутации — ТОЛЬКО на смену уровня (не на каждое начисление)
+    if (newLevel !== level) {
+      this.bus!.publish('village.reputationChanged', {
+        partner: partner.id,
+        partnerName: partner.name,
+        from: level,
+        to: newLevel,
+        fromName: this.tradeTable!.reputation.levels[level]!.name,
+        toName: this.tradeTable!.reputation.levels[newLevel]!.name,
+        points: newPoints,
+      });
+      this.bus!.publish('invalidate.price', {}); // «Друг деревни» −5% мог включиться
+    }
+    const lines = [
+      `списано: ${c.item} ×${c.qty} · получено: ${payout}з (TransactionService village.trade)`,
+      `премия контракта ${premiumWithTrend(c.premiumPercent, this.state.trade?.trends[c.item], this.tradeTable!.trends.contractSwingPercent)}% к ставке скупки — расшифровка PriceBus (тег trade)`,
+      `репутация «${partner.name}»: ${points} → ${newPoints} (+${gained} за контракт${newLevel !== level ? ` · НОВЫЙ УРОВЕНЬ «${this.tradeTable!.reputation.levels[newLevel]!.name}»` : ''})`,
+      `история цен: ${c.item} @ ${Math.max(1, Math.round(payout / c.qty))}з за единицу (лента — trade)`,
+    ];
+    return ok({ header: `Контракт исполнен: ${partner.name} — ${this.itemName(c.item)} ×${c.qty}`, lines });
+  }
+
+  /** [G6] покупка уникального товара: ТОЛЬКО у партнёра, гейт репутации,
+   *  цена PriceBus (тег trade; тренды/«Друг деревни»/Рынок в расшифровке) */
+  private buyGood(partnerId: string, itemId: string, qtyArg: number): Result<SupplyReceipt> {
+    if (!this.ensureOpen()) return err(GATE_MSG);
+    if (this.ensureTradeOfDay()) this.bus!.publish('invalidate.price', {});
+    const partner = findPartner(this.tradeTable!, partnerId);
+    if (partner === undefined) {
+      return err(`неизвестный партнёр: ${partnerId} (trade — доска биржи)`);
+    }
+    const good = partner.goods.find((g) => g.defId === itemId);
+    if (good === undefined) {
+      return err(`«${partner.name}» не продаёт ${itemId} (уникальные товары партнёра — trade; чужое — shop buy)`);
+    }
+    const points = reputationPointsOf(this.state, partner.id, this.tradeTable!);
+    const level = reputationLevelOf(this.tradeTable!, points);
+    if (level < good.requiredLevel) {
+      return err(
+        `нужен уровень репутации «${this.tradeTable!.reputation.levels[good.requiredLevel]!.name}» (сейчас «${reputationLevelName(this.tradeTable!, points)}», очков ${points}/${this.tradeTable!.reputation.levels[good.requiredLevel]!.minPoints})`,
+      );
+    }
+    const qty = Number.isFinite(qtyArg) ? Math.max(1, Math.min(10, Math.floor(qtyArg))) : 1;
+    const probe = this.deps.canAcquireItem(itemId, qty);
+    if (!probe.fits) {
+      return err(`инвентарь полон — покупка не начата: свободно ${probe.free}, нужно записей ${probe.newEntries} (D23)`);
+    }
+    const priced = this.itemPricedOf(itemId);
+    if (priced === undefined) return err(`предмет не найден в реестре: ${itemId}`);
+    const { final, applied } = this.goodPrice(itemId, partner.id);
+    const total = final * qty;
+    const tx = this.transaction!.transact({
+      costs: [{ t: 'currency', id: 'gold', qty: total }],
+      eventId: 'village.trade.buy',
+      reason: `покупка у «${partner.name}»: ${itemId} ×${qty} (PriceBus тег trade)`,
+    });
+    if (!tx.ok) return err(`покупка не состоялась: ${tx.error}`);
+    // выдача с роллом качества (паттерн магазина C4; после пробы — гарантирована)
+    const delivery = this.deps.acquireItem(itemId, qty, 'village.trade.buy');
+    if (!delivery.ok) {
+      // аварийный возврат золота (объявленный путь; живая игра недостижима)
+      this.transaction!.transact({
+        grants: [{ t: 'currency', id: 'gold', qty: total }],
+        eventId: 'village.trade.buy.refund',
+        reason: `аварийный возврат: выдача ${itemId} ×${qty} не состоялась`,
+      });
+      return err(`выдача не состоялась: ${delivery.error} — золото возвращено (village.trade.buy.refund)`);
+    }
+    this.state = pushHistory(this.state, this.tradeTable!, {
+      day: this.today(),
+      defId: itemId,
+      kind: 'buy',
+      unit: final,
+      qty,
+    });
+    this.markDirty();
+    const lines = [
+      `списано: ${total}з · получено: ${itemId} ×${qty} (TransactionService village.trade.buy; канал inventory.acquire — качество роллится)`,
+      `цена единицы: ${final}з${applied.length > 0 ? ` · расшифровка: ${applied.join('; ')}` : ' · модификаторов нет'}`,
+      `история цен: ${itemId} @ ${final}з (лента — trade)`,
+    ];
+    return ok({ header: `Покупка у «${partner.name}»: ${this.itemName(itemId)} ×${qty}`, lines });
+  }
+
+  /** [G8, dev] реролл контрактов/трендов дня: rerolls+1 → новые сиды;
+   *  маркеры fulfilled НЕ сбрасываются (двойных исполнений форс не даёт) */
+  private forceTradeReroll(): Result<SupplyReceipt> {
+    if (!this.ensureOpen()) return err(GATE_MSG);
+    const dateISO = this.today();
+    this.state = rerollTradeDay(this.state, this.tradeTable!, { saveId: () => this.deps.saveId() }, dateISO);
+    this.markDirty();
+    this.bus!.publish('invalidate.price', {});
+    const trade = this.state.trade!;
+    const trendLines = Object.entries(trade.trends).map(([defId, kind]) => `  ${defId}: ${kind === 'abundance' ? 'изобилие −15%' : 'дефицит +20%'}`);
+    return ok({
+      header: `Форс ротации биржи (dev): день ${dateISO}, реролл #${trade.rerolls}`,
+      lines: [
+        'контракты и тренды перегенерированы (сид-суффикс #N — прецедент raid.force)',
+        'маркеры исполнений дня НЕ сброшены (двойных контрактов форс не даёт)',
+        ...(trendLines.length > 0 ? ['тренды дня:', ...trendLines] : ['тренды дня: пусто (ролл не выбрал ни один)']),
+        'витрина — village.trade',
+      ],
+    });
   }
 
   // ------------------------------------------------------------ поставка (G3)

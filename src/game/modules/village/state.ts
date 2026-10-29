@@ -16,6 +16,21 @@
  *    недели рейда (scoped-маркер: warned относится к окну week), lastResult
  *    — итог последнего разрешения (+week — идемпотентность разрешения).
  *
+ * [M16.3 · DECISION M163-срез]: снова ЛЕНЬИВЫЕ ключи БЕЗ bump (v: 1 жив,
+ * миграций НЕТ; док-факт «village-ключи материализуются при использовании»
+ * сохраняется — до первого обращения к бирже открытой деревни ключей нет):
+ *  - trade?: { day, contracts, trends, fulfilled, history, rerolls } —
+ *    день биржи: контракты/тренды ротируются по маркеру day (идемпотентность
+ *    dayTick-реплея и catchUp — прецедент need.day/raid.week); fulfilled —
+ *    маркер «контракт партнёра исполнен в день N» (повтор — отказ);
+ *    history — кольцевой буфер цен (cap в данных, хвост остаётся);
+ *    rerolls — счётчик дев-форса ротации (сид-суффикс, обнуляется сменой дня);
+ *  - reputation?: Record<partnerId, { points }> — очки репутации партнёров;
+ *    уровень — ПРОИЗВОДНАЯ от очков (reputationLevelOf), в срезе не хранится;
+ *    событие village.reputationChanged — на ИЗМЕНЕНИЕ уровня в момент
+ *    исполнения контракта (единственный источник очков — маркер fulfilled
+ *    гарантирует «ровно ×1»).
+ *
  * КЛЮЧЕВЫЕ ИНВАРИАНТЫ (M16.1 живут):
  *  - ДО открытия гейта срез НЕ инициализируется: save() → undefined,
  *    файл чистой игры НЕ получает ключа village («пост-wipe тишина»).
@@ -24,13 +39,17 @@
  *  - Идемпотентность M16.2: завершение стройки УДАЛЯЕТ запись из
  *    construction (реплей hourTick не найдёт её — прецедент need.day);
  *    предвестник/разрешение рейда — маркеры (week, warned, lastResult.week).
+ *  - Идемпотентность M16.3: trade.day === today — повторный dayTick НЕ
+ *    переролливает контракты/тренды; fulfilled[partner] === today — повторное
+ *    исполнение контракта отклоняется ещё до транзакции.
  *
- * Санитизация load: клэмпы; unknown-здания/жители НЕ переносятся молча
- * (контент мог уйти — канонический порядок ключей = порядок контента,
- * roundtrip байт-в-байт).
+ * Санитизация load: клэмпы; unknown-здания/жители/партнёры/товары НЕ
+ * переносятся молча (контент мог уйти — канонический порядок ключей =
+ * порядок контента, roundtrip байт-в-байт).
  */
 import type { SaveSlice } from '@/kernel/save/save-director';
-import type { VillagerDef, VillageBuildingDef } from '@/content/village/types';
+import type { VillagerDef, VillageBuildingDef, VillageTradeTable } from '@/content/village/types';
+import { trendPoolOf } from '@/content/village/trade';
 import { QUALITY_TIERS } from '@/shared/types/ids';
 import type { QualityTier } from '@/shared/types/ids';
 
@@ -73,6 +92,32 @@ export interface VillageRaidState {
   lastResult?: VillageRaidResultState;
 }
 
+/** [M16.3] запись истории цен биржи (кольцевой буфер, cap в данных) */
+export interface VillageTradeHistoryEntry {
+  day: string;
+  defId: string;
+  kind: 'contract' | 'buy';
+  /** цена ЗА ЕДИНИЦУ фактической сделки (final/qty, округлено) */
+  unit: number;
+  qty: number;
+}
+
+/** [M16.3] день биржи: контракты/тренды/маркеры исполнений/история */
+export interface VillageTradeState {
+  /** маркер дня ротации (идемпотентность dayTick-реплея) */
+  day: string;
+  /** контракт дня по партнёрам (порядок ключей = контент) */
+  contracts: Record<string, { item: string; qty: number; premiumPercent: number }>;
+  /** тренды дня: defId → изобилие/дефицит (пул биржи) */
+  trends: Record<string, 'abundance' | 'deficit'>;
+  /** маркер исполнения: партнёр → день (повтор — отказ) */
+  fulfilled: Record<string, string>;
+  /** кольцевой буфер цен (последние N сделок; cap в данных) */
+  history: VillageTradeHistoryEntry[];
+  /** счётчик дев-форса ротации (сид-суффикс; сбрасывается сменой дня) */
+  rerolls: number;
+}
+
 export interface VillageState {
   v: 1;
   unlocked: boolean;
@@ -83,6 +128,8 @@ export interface VillageState {
   construction?: Record<string, { finishAt: number }>;
   equipped?: Record<string, VillageEquipState>;
   raid?: VillageRaidState;
+  trade?: VillageTradeState;
+  reputation?: Record<string, { points: number }>;
 }
 
 export function defaultVillageState(): VillageState {
@@ -99,7 +146,9 @@ export function isPristineVillage(s: VillageState): boolean {
     (s.buildings === undefined || Object.keys(s.buildings).length === 0) &&
     (s.construction === undefined || Object.keys(s.construction).length === 0) &&
     (s.equipped === undefined || Object.keys(s.equipped).length === 0) &&
-    s.raid === undefined
+    s.raid === undefined &&
+    s.trade === undefined &&
+    s.reputation === undefined
   );
 }
 
@@ -176,8 +225,89 @@ function canonicalRaid(raw: unknown): VillageRaidState | undefined {
   return { week, warned: r.warned === true, ...(lastResult !== undefined ? { lastResult } : {}) };
 }
 
+/** [M16.3] день биржи: порядок ключей = контент партнёров/пула трендов;
+ *  unknown-партнёры/товары НЕ переносятся молча; история — хвост cap */
+function canonicalTrade(
+  raw: unknown,
+  trade: VillageTradeTable,
+): VillageTradeState | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined;
+  const t = raw as Record<string, unknown>;
+  const day = dateOrNull(t.day);
+  if (day === null) return undefined;
+  const contracts: VillageTradeState['contracts'] = {};
+  const contractsRaw = (t.contracts ?? {}) as Record<string, unknown>;
+  for (const p of trade.partners) {
+    const c = contractsRaw[p.id];
+    if (c === null || typeof c !== 'object') continue;
+    const rec = c as Record<string, unknown>;
+    if (typeof rec.item !== 'string' || !p.requests.includes(rec.item)) continue;
+    contracts[p.id] = {
+      item: rec.item,
+      qty: clampInt(rec.qty, 1, trade.contracts.qtyMin, trade.contracts.qtyMax),
+      premiumPercent: clampInt(rec.premiumPercent, trade.contracts.premiums[0]!, trade.contracts.premiums[0]!, trade.contracts.premiums[trade.contracts.premiums.length - 1]!),
+    };
+  }
+  const trendPool = trendPoolOf(trade);
+  const trends: VillageTradeState['trends'] = {};
+  const trendsRaw = (t.trends ?? {}) as Record<string, unknown>;
+  for (const id of trendPool) {
+    const kind = trendsRaw[id];
+    if (kind === 'abundance' || kind === 'deficit') trends[id] = kind;
+  }
+  const fulfilled: VillageTradeState['fulfilled'] = {};
+  const fulfilledRaw = (t.fulfilled ?? {}) as Record<string, unknown>;
+  for (const p of trade.partners) {
+    const d = dateOrNull(fulfilledRaw[p.id]);
+    if (d !== null) fulfilled[p.id] = d;
+  }
+  const historyRaw = Array.isArray(t.history) ? t.history : [];
+  const history: VillageTradeHistoryEntry[] = [];
+  for (const h of historyRaw) {
+    if (history.length >= trade.trends.historyCap) break;
+    if (h === null || typeof h !== 'object') continue;
+    const e = h as Record<string, unknown>;
+    const d = dateOrNull(e.day);
+    if (d === null || typeof e.defId !== 'string' || !trendPool.includes(e.defId)) continue;
+    history.push({
+      day: d,
+      defId: e.defId,
+      kind: e.kind === 'buy' ? 'buy' : 'contract',
+      unit: clampInt(e.unit, 0, 0, 10_000_000),
+      qty: clampInt(e.qty, 1, 1, 1_000_000),
+    });
+  }
+  return {
+    day,
+    contracts,
+    trends,
+    fulfilled,
+    history,
+    rerolls: clampInt(t.rerolls, 0, 0, 999),
+  };
+}
+
+/** [M16.3] очки репутации: порядок ключей = контент, клэмпы */
+function canonicalReputation(raw: unknown, trade: VillageTradeTable): Record<string, { points: number }> | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  const out: Record<string, { points: number }> = {};
+  for (const p of trade.partners) {
+    if (!Object.prototype.hasOwnProperty.call(r, p.id)) continue;
+    const rec = r[p.id];
+    if (rec === null || typeof rec !== 'object') continue;
+    out[p.id] = { points: clampInt((rec as Record<string, unknown>).points, p.startPoints, 0, 999_999) };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 /** канонический порядок полей — roundtrip байт-в-байт */
-export function canonicalVillageState(s: VillageState, defs: VillagerDef[], buildings: VillageBuildingDef[]): VillageState {
+export function canonicalVillageState(
+  s: VillageState,
+  defs: VillagerDef[],
+  buildings: VillageBuildingDef[],
+  trade: VillageTradeTable,
+): VillageState {
   const villagers: Record<string, VillagerLiveState> = {};
   const raw = (s.villagers ?? {}) as Record<string, unknown>;
   // порядок ключей — порядок контента (стабильный roundtrip)
@@ -222,6 +352,8 @@ export function canonicalVillageState(s: VillageState, defs: VillagerDef[], buil
     ...(Object.keys(construction).length > 0 ? { construction } : {}),
     ...(Object.keys(equipped).length > 0 ? { equipped } : {}),
     ...(canonicalRaid(s.raid) !== undefined ? { raid: canonicalRaid(s.raid)! } : {}),
+    ...(canonicalTrade(s.trade, trade) !== undefined ? { trade: canonicalTrade(s.trade, trade)! } : {}),
+    ...(canonicalReputation(s.reputation, trade) !== undefined ? { reputation: canonicalReputation(s.reputation, trade)! } : {}),
   };
 }
 
@@ -234,11 +366,12 @@ export function villageSaveSlice(
   setState: (s: VillageState) => void,
   defs: VillagerDef[],
   buildings: VillageBuildingDef[],
+  trade: VillageTradeTable,
 ): SaveSlice {
   return {
     save: () => {
       const s = getState();
-      return isPristineVillage(s) ? undefined : canonicalVillageState(s, defs, buildings);
+      return isPristineVillage(s) ? undefined : canonicalVillageState(s, defs, buildings, trade);
     },
     load: (data: unknown) => {
       const s = data as VillageState | undefined;
@@ -246,7 +379,7 @@ export function villageSaveSlice(
         setState(defaultVillageState());
         return;
       }
-      setState(canonicalVillageState(s, defs, buildings));
+      setState(canonicalVillageState(s, defs, buildings, trade));
     },
   };
 }

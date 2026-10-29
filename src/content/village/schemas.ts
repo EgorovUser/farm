@@ -224,3 +224,67 @@ export const villageRaidSchema = z
     winHappinessBonus: z.number().int().min(1).max(20),
   })
   .strict();
+
+// ---------------------------------------------------------------- [M16.3] биржа
+
+const tradeGood = z
+  .object({
+    defId: z.string().regex(ID_RE),
+    requiredLevel: z.number().int().min(0).max(3, 'индекс шкалы репутации 0..3'),
+  })
+  .strict();
+
+const tradePartner = z
+  .object({
+    id: z.string().regex(ID_RE),
+    name: z.string().min(1),
+    desc: z.string().min(1),
+    requests: z.array(z.string().regex(ID_RE)).min(2).max(6),
+    goods: z.array(tradeGood).min(1).max(4),
+    startPoints: z.number().int().min(0).max(999),
+    contractMinLevel: z.number().int().min(0).max(3),
+  })
+  .strict();
+
+/** биржа: 5–7 партнёров; «Друг деревни» −5% (04 §2.1); изобилие −15%
+ *  (04 §2.1); дефицит — markup (04 §4.3); история — кольцевой буфер */
+export const villageTradeSchema = z
+  .object({
+    reputation: z
+      .object({
+        levels: z
+          .array(z.object({ id: z.string().regex(ID_RE), name: z.string().min(1), minPoints: z.number().int().min(0) }).strict())
+          .length(4, 'шкала репутации — 4 ступени (бриф G1)'),
+        pointsPerContract: z.number().int().min(1).max(20),
+        friendDiscountPercent: z.literal(5, '04-DISCOUNTS §2.1: «Друг деревни» −5%'),
+      })
+      .strict(),
+    contracts: z
+      .object({
+        qtyMin: z.number().int().min(1).max(10),
+        qtyMax: z.number().int().min(1).max(10),
+        premiums: z.array(z.number().int().min(10).max(200)).min(3, 'тиры премий — ≥3 (взвешенный ролл)'),
+      })
+      .strict()
+      .refine((c) => c.qtyMax >= c.qtyMin, { message: 'qtyMax ≥ qtyMin' }),
+    trends: z
+      .object({
+        perDay: z.number().int().min(1).max(5),
+        abundancePercent: z.literal(15, '04-DISCOUNTS §2.1: изобилие −15%'),
+        deficitMarkupPercent: z.number().int().min(1).max(50),
+        contractSwingPercent: z.number().int().min(0).max(50),
+        historyCap: z.number().int().min(10).max(200),
+      })
+      .strict(),
+    partners: z.array(tradePartner).min(5, 'бриф G1: 5–7 партнёров').max(7, 'бриф G1: 5–7 партнёров'),
+  })
+  .strict()
+  .refine(
+    (t) => {
+      // уникальный товар принадлежит РОВНО ОДНОМУ партнёру (форма;
+      // ссылочная целостность defId — self-check группы M16, прецедент)
+      const all = t.partners.flatMap((p) => p.goods.map((g) => g.defId));
+      return new Set(all).size === all.length;
+    },
+    { message: 'уникальный товар — ровно у одного партнёра' },
+  );

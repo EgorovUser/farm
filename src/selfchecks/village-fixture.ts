@@ -11,6 +11,13 @@ import { ManualClock } from '@/kernel/di/clock';
 import { MemoryStorage } from '@/kernel/save/storage-drivers';
 import { createGame, type Game } from '@/game/bootstrap';
 import { VILLAGE_TABLE, villageLevelOf } from '@/content/village/table';
+// [M16.3 · фикс хелпера] канонический инвариант weekly M16.1: удовлетворение
+// ЛЮБОГО дня iso-недели закрывает weekly — guard «lastSatisfied === today»
+// пропускал этот случай и supply честно отказывал (поймано чеком 35)
+import { needSatisfied } from '@/game/modules/village/logic';
+// [M16.3 · фикс хелпера №2] потребности бывают ВАЛЮТНЫМИ (мастер-пул M16.1:
+// planks/nails/…) — рюкзак их не держит, кошелёк грантится напрямую
+import { ITEMS } from '@/content/items/items';
 
 export type R<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -38,6 +45,9 @@ const CAPTURED = [
   'item.acquired',
   'player.levelUp',
   'achievement.unlocked',
+  // [M16.3] события биржи (ровно ×1-оракулы чеков 30/32)
+  'trade.fulfilled',
+  'village.reputationChanged',
 ] as const;
 
 export async function makeVillageGame(storage?: MemoryStorage): Promise<VillageFixture> {
@@ -144,6 +154,17 @@ export interface VillageSliceShape {
   construction?: Record<string, { finishAt: number }>;
   equipped?: Record<string, { defId: string; tier: string; value: number; sharpening: number }>;
   raid?: { week: string; warned: boolean; lastResult?: { success: boolean; stolen: number; dateISO: string; week: string } };
+  /** [M16.3] день биржи (ленивый — материализуется при обращении) */
+  trade?: {
+    day: string;
+    contracts: Record<string, { item: string; qty: number; premiumPercent: number }>;
+    trends: Record<string, string>;
+    fulfilled: Record<string, string>;
+    history: Array<{ day: string; defId: string; kind: string; unit: number; qty: number }>;
+    rerolls: number;
+  };
+  /** [M16.3] очки репутации (ленивый — при первом ИЗМЕНЕНИИ) */
+  reputation?: Record<string, { points: number }>;
 }
 
 /** [M16.2] срез деревни из файла сейва (undefined — ключа нет: до гейта) */
@@ -154,15 +175,22 @@ export async function readVillageSlice(f: VillageFixture): Promise<VillageSliceS
 }
 
 /** [M16.2] удовлетворить все неудовлетворённые потребности текущего дня
- *  (поставки копят XP деревне; onlyDaily — шаг +8 для контролируемого XP) */
+ *  (поставки копят XP деревне; onlyDaily — шаг +8 для контролируемого XP;
+ *  skip-правило — КАНОНИЧЕСКИЙ needSatisfied: weekly закрыта удовлетворением
+ *  любого дня iso-недели — такая потребность пропускается молча) */
 export async function satisfyVillageNeeds(f: VillageFixture, onlyDaily = false, xpBudget = Number.POSITIVE_INFINITY): Promise<void> {
   const slice = await readVillageSlice(f);
   const today = localDateISO(f.clock.now());
   for (const [id, lv] of Object.entries(slice?.villagers ?? {})) {
     if (lv.need === undefined || lv.lastSatisfied === today) continue;
+    if (needSatisfied(lv.need as { item: string; qty: number; kind: 'daily' | 'weekly'; day: string }, lv.lastSatisfied ?? undefined)) continue;
     if (onlyDaily && lv.need.kind !== 'daily') continue;
     if ((slice?.xp ?? 0) + (lv.need.kind === 'weekly' ? 30 : 8) > xpBudget) continue;
-    giveItems(f, lv.need.item, lv.need.qty);
+    if (ITEMS.some((d) => d.id === lv.need!.item)) {
+      giveItems(f, lv.need.item, lv.need.qty);
+    } else {
+      f.game.wallet.grant(lv.need.item as 'gold', lv.need.qty + 5); // валюта кошелька + запас
+    }
     const r = f.village['village.supply'](id, lv.need.item) as R<unknown>;
     if (!r.ok) throw new Error(`supply ${id}: ${r.error}`);
   }
@@ -170,13 +198,20 @@ export async function satisfyVillageNeeds(f: VillageFixture, onlyDaily = false, 
 
 /** [M16.2] поднять деревню до уровня ≥ 2 поставками (честный путь XP) */
 export async function raiseVillageToLevel2(f: VillageFixture): Promise<void> {
-  for (let day = 0; day < 8; day++) {
+  await raiseVillageToLevel(f, 2, 8);
+}
+
+/** [M16.3] поднять деревню до уровня ≥ target поставками (честный путь XP:
+ *  каждый день — удовлетворить все потребности, затем dayTick; цикл до
+ *  уровня — паттерн raiseVillageToLevel2, обобщён для Рынка (уровень 6) */
+export async function raiseVillageToLevel(f: VillageFixture, target: number, maxDays = 30): Promise<void> {
+  for (let day = 0; day < maxDays; day++) {
     const slice = await readVillageSlice(f);
-    if (villageLevelOf(slice?.xp ?? 0, VILLAGE_TABLE.level) >= 2) return;
+    if (villageLevelOf(slice?.xp ?? 0, VILLAGE_TABLE.level) >= target) return;
     await satisfyVillageNeeds(f);
     dayTickAt(f, day + 1);
   }
-  throw new Error('raiseVillageToLevel2: уровень 2 не достигнут за 8 дней');
+  throw new Error(`raiseVillageToLevel: уровень ${target} не достигнут за ${maxDays} дней`);
 }
 
 /** открыть гейт ЧЕСТНЫМ путём: XP до 30+ и dev-unlock «Мастера хутора» */
@@ -209,4 +244,37 @@ export function needsOf(f: VillageFixture): NeedRowF[] {
 /** выдать предметы в инвентарь (канал acquire — ролл качества, D23) */
 export function giveItems(f: VillageFixture, defId: string, qty: number): R<unknown> {
   return f.inv['inventory.acquire'](defId, qty, 'fixture.give') as R<unknown>;
+}
+
+// ---------------------------------------------------------------- [M16.3] биржа
+
+/** форма витрины биржи (чеки 27–36, общий модуль группы) */
+export interface TradeViewF {
+  day: string;
+  contracts: Array<{ partnerId: string; item: string; qty: number; premiumPercent: number; estimateUnit: number | null; estimateTotal: number | null; fulfilledToday: boolean; gateLine: string | null }>;
+  trends: Array<{ defId: string; kind: 'abundance' | 'deficit'; line: string }>;
+  goods: Array<{ partnerId: string; defId: string; requiredLevelName: string; price: number; applied: string[]; gateLine: string | null }>;
+  reputation: Array<{ partnerId: string; points: number; levelName: string; toNext: number | null }>;
+  history: Array<{ defId: string; kind: string; unit: number; day: string; qty: number; arrow: string }>;
+  marketDiscount: number;
+}
+
+export function tradeOf(f: VillageFixture): TradeViewF {
+  return f.village['village.trade']() as TradeViewF;
+}
+
+export function tradeEventsOf(f: VillageFixture): Array<Record<string, unknown>> {
+  return f.events.filter((e) => e.name === 'trade.fulfilled').map((e) => e.payload);
+}
+
+export function repEventsOf(f: VillageFixture): Array<Record<string, unknown>> {
+  return f.events.filter((e) => e.name === 'village.reputationChanged').map((e) => e.payload);
+}
+
+/** исполнить сегодняшний контракт партнёра (дать предметы → fulfill) */
+export function fulfillToday(f: VillageFixture, partnerId: string): R<unknown> {
+  const view = tradeOf(f);
+  const c = view.contracts.find((r) => r.partnerId === partnerId)!;
+  giveItems(f, c.item, c.qty);
+  return f.village['village.trade.fulfill'](partnerId) as R<unknown>;
 }

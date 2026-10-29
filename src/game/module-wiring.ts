@@ -794,6 +794,14 @@ export function wireGameModules(
         }>).map((e) => ({ iid: e.iid, defId: e.defId, qty: e.qty, tier: e.quality.tier, value: e.quality.value })),
       forgeLevelOf: (iid) => Number(modules.call('forge', 'forge.levelOf', iid) ?? 0),
       walletGold: () => wallet.get('gold'),
+      // --- [M16.3] покупка уникальных товаров у партнёров биржи: выдача с
+      //     РОЛЛОМ качества — канал inventory.acquire (паттерн deliverItem
+      //     магазина C4; после D23-пробы canAcquire гарантирована)
+      acquireItem: (defId, qty, source) =>
+        (modules.call('inventory', 'inventory.acquire', defId, qty, source) ?? {
+          ok: false as const,
+          error: 'модуль инвентаря недоступен',
+        }) as Result<{ iids: string[]; entries: number; quality: { tier: string; value: number } }>,
       views: {
         farmTabs: () =>
           ((modules.call('farm', 'farm.state') ?? { tabs: [] }) as {

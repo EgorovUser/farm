@@ -112,6 +112,8 @@ import { VILLAGE_HELP } from '@/content/village/help';
 import { VILLAGE_BASES_TABLE, VILLAGE_TABLE } from '@/content/village/table';
 import { VILLAGE_BUILDINGS } from '@/content/village/buildings';
 import { VILLAGE_RAID } from '@/content/village/raid';
+// [M16.3] биржа: партнёры/контракты/репутация/тренды (бриф G1)
+import { VILLAGE_TRADE } from '@/content/village/trade';
 import {
   villageBasesSchema,
   villageBuildingsSchema,
@@ -121,6 +123,7 @@ import {
   villageRaidSchema,
   villageTableSchema,
   villageTaxSchema,
+  villageTradeSchema,
   villagersSchema,
 } from '@/content/village/schemas';
 import {
@@ -282,4 +285,6 @@ export function registerContent(content: ContentRegistry): void {
   //     9 зданий × уровни 1–3 (цены/часы/эффекты) + расписание/порог/капа
   content.register('village.buildings', villageBuildingsSchema, VILLAGE_BUILDINGS);
   content.register('village.raid', villageRaidSchema, VILLAGE_RAID);
+  // [M16.3] таблица биржи (zod: 5–7 партнёров, шкала ×4, −5%/−15% каноны 04)
+  content.register('village.trade', villageTradeSchema, VILLAGE_TRADE);
 }

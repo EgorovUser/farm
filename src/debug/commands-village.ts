@@ -6,6 +6,10 @@
  * переролль потребностей + сбор налога; помечен dev, прецедент lake.force).
  * [M16.2] village.build <id|витрина>, village.equip <villagerId> <itemId|off>,
  * village.raid (порог/защита/расписание/маркеры), village.raid.force (dev).
+ * [M16.3] village.trade (доска биржи: партнёры/контракты/тренды/репутация/
+ * история цен), village.trade.fulfill <partnerId> [item] (TransactionService),
+ * village.trade.buy <partnerId> <itemId> [qty] (PriceBus тег trade),
+ * village.trade.trend.force (dev: реролл контрактов/трендов дня).
  */
 import type { CommandRegistry, CommandContext } from './console-types';
 
@@ -288,6 +292,122 @@ export function registerVillageCommands(registry: CommandRegistry): void {
       const api = ctx.game.modules.get('village')?.api;
       if (!api) return ctx.printErr('модуль деревни не активен');
       const r = api['village.raid.force']() as R<{ header: string; lines: string[] }>;
+      if (!r.ok) return ctx.printErr(r.error);
+      ctx.printTitle(r.value.header);
+      for (const line of r.value.lines) ctx.print(`  ${line}`);
+      ctx.refresh();
+    },
+  });
+
+  // ------------------------------------------------------------ M16.3 (биржа)
+
+  registry.register({
+    name: 'village.trade',
+    usage: 'village.trade',
+    description: 'биржа: партнёры/контракты дня (премия к ставке)/тренды/репутация/уникальные товары (цены с расшифровкой PriceBus)/история цен',
+    run(_args, ctx) {
+      const api = ctx.game.modules.get('village')?.api;
+      if (!api) return ctx.printErr('модуль деревни не активен');
+      const v = api['village.trade']() as {
+        day: string;
+        contracts: Array<{ partnerId: string; partnerName: string; item: string; qty: number; premiumPercent: number; estimateUnit: number | null; estimateTotal: number | null; fulfilledToday: boolean; gateLine: string | null }>;
+        goods: Array<{ partnerId: string; partnerName: string; defId: string; requiredLevelName: string; price: number; applied: string[]; gateLine: string | null }>;
+        trends: Array<{ defId: string; kind: 'abundance' | 'deficit'; line: string }>;
+        reputation: Array<{ partnerId: string; partnerName: string; points: number; levelName: string; toNext: number | null }>;
+        history: Array<{ defId: string; kind: string; unit: number; day: string; qty: number; arrow: string }>;
+        marketDiscount: number;
+      };
+      if (v.contracts.length === 0 && v.goods.length === 0) {
+        return ctx.printErr('деревня заперта: биржа закрыта (village state — гейт)');
+      }
+      ctx.printTitle(`Биржа деревни (village.trade) — день ${v.day}`);
+      ctx.print('  контракты дня (исполнение — village trade fulfill <partnerId>):');
+      for (const c of v.contracts) {
+        const status = c.fulfilledToday ? 'ИСПОЛНЕН' : c.gateLine !== null ? `закрыто: ${c.gateLine}` : 'открыт';
+        const est = c.estimateUnit !== null ? `· оценка ${c.estimateUnit}з/ед → ~${c.estimateTotal}з (худший экземпляр рюкзака)` : '· предмета нет в рюкзаке (оценка без качества)';
+        ctx.print(`    ${c.partnerName}: ${c.item} ×${c.qty} — премия +${c.premiumPercent}% к ставке скупки ${est}`);
+        ctx.print(`      статус: ${status}`);
+      }
+      ctx.print('  тренды дня (04-DISCOUNTS §2.1/§4.3):');
+      if (v.trends.length === 0) {
+        ctx.print('    — (ни один товар не трендируется)');
+      } else {
+        for (const t of v.trends) ctx.print(`    ${t.defId}: ${t.line}`);
+      }
+      ctx.print('  репутация (очка за контракт — данные биржи; шкала: Чужак → Знакомый → Поставщик → Друг деревни):');
+      for (const r of v.reputation) {
+        ctx.print(`    ${r.partnerName}: ${r.points} очков — «${r.levelName}»${r.toNext !== null ? ` (до следующего ${r.toNext})` : ' (МАКС)'}`);
+      }
+      ctx.print('  уникальные товары партнёров (покупка — village trade buy <partnerId> <itemId> [qty]):');
+      for (const g of v.goods) {
+        const gate = g.gateLine !== null ? ` · ЗАКРЫТО: ${g.gateLine}` : '';
+        ctx.print(`    ${g.partnerName}: ${g.defId} — ${g.price}з${gate}`);
+        if (g.applied.length > 0) ctx.print(`      расшифровка: ${g.applied.join('; ')}`);
+      }
+      if (v.history.length > 0) {
+        ctx.print('  история цен (последняя сделка по товару; ↑↓ — направление):');
+        const ARROW: Record<string, string> = { up: '↑', down: '↓', flat: '=', none: '·' };
+        for (const h of v.history) {
+          ctx.print(`    ${h.defId} (${h.kind === 'contract' ? 'контракт' : 'покупка'}): ${h.unit}з/ед ×${h.qty} — ${h.day} ${ARROW[h.arrow] ?? '·'}`);
+        }
+      } else {
+        ctx.print('  история цен: сделок ещё не было');
+      }
+      if (v.marketDiscount > 0) {
+        ctx.print(`  Рынок деревни: −${v.marketDiscount}% у купцов (потребитель — цены биржи)`);
+      }
+    },
+  });
+
+  registry.register({
+    name: 'village.trade.fulfill',
+    usage: 'village.trade.fulfill <partnerId> [item]',
+    description: 'исполнить контракт дня партнёра (TransactionService: предмет → золото с премией; +репутация; событие trade.fulfilled)',
+    run(args, ctx) {
+      const api = ctx.game.modules.get('village')?.api;
+      if (!api) return ctx.printErr('модуль деревни не активен');
+      const [partner, item] = args;
+      if (partner === undefined) {
+        return ctx.printErr('формат: village trade fulfill <partnerId> [item] (доска — village trade)');
+      }
+      const r = api['village.trade.fulfill'](partner, item) as R<{ header: string; lines: string[] }>;
+      if (!r.ok) return ctx.printErr(r.error);
+      ctx.printOk(`  ${r.value.header}`);
+      for (const line of r.value.lines) ctx.print(`    ${line}`);
+      ctx.refresh();
+    },
+  });
+
+  registry.register({
+    name: 'village.trade.buy',
+    usage: 'village.trade.buy <partnerId> <itemId> [qty]',
+    description: 'купить уникальный товар у партнёра (PriceBus тег trade: тренды/репутация/Рынок; гейт — уровень репутации)',
+    run(args, ctx) {
+      const api = ctx.game.modules.get('village')?.api;
+      if (!api) return ctx.printErr('модуль деревни не активен');
+      const [partner, item, qty] = args;
+      if (partner === undefined || item === undefined) {
+        return ctx.printErr('формат: village trade buy <partnerId> <itemId> [qty] (товары — village trade)');
+      }
+      const r = api['village.trade.buy'](partner, item, qty !== undefined ? Number(qty) : 1) as R<{
+        header: string;
+        lines: string[];
+      }>;
+      if (!r.ok) return ctx.printErr(r.error);
+      ctx.printOk(`  ${r.value.header}`);
+      for (const line of r.value.lines) ctx.print(`    ${line}`);
+      ctx.refresh();
+    },
+  });
+
+  registry.register({
+    name: 'village.trade.trend.force',
+    usage: 'village.trade.trend.force',
+    description: 'dev: реролл контрактов и трендов дня (сид-суффикс #N; маркеры исполнений НЕ сбрасывает; прецедент village.raid.force)',
+    run(_args, ctx) {
+      const api = ctx.game.modules.get('village')?.api;
+      if (!api) return ctx.printErr('модуль деревни не активен');
+      const r = api['village.trade.trend.force']() as R<{ header: string; lines: string[] }>;
       if (!r.ok) return ctx.printErr(r.error);
       ctx.printTitle(r.value.header);
       for (const line of r.value.lines) ctx.print(`  ${line}`);

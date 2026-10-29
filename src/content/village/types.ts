@@ -166,6 +166,62 @@ export interface VillageRaidTable {
   winHappinessBonus: number;
 }
 
+// ---------------------------------------------------------------- [M16.3] биржа
+
+/** уникальный товар партнёра: покупается ТОЛЬКО у него, гейт — уровень
+ *  репутации (индекс шкалы 0..3; карточка M16 §5 «уникальные товары») */
+export interface VillageTradeGoodDef {
+  defId: string;
+  /** требуемый индекс уровня репутации (0=Чужак .. 3=Друг деревни) */
+  requiredLevel: number;
+}
+
+/** деревня-партнёр биржи ([DECISION M163-партнёры]; карточка M16 §5) */
+export interface VillageTradePartnerDef {
+  id: string;
+  name: string;
+  desc: string;
+  /** пул запросов контрактов дня (defId существующих предметов) */
+  requests: string[];
+  /** уникальные товары — продаёт ТОЛЬКО этот партнёр */
+  goods: VillageTradeGoodDef[];
+  /** стартовые очки репутации (данные; соседи начинают «Знакомыми») */
+  startPoints: number;
+  /** минимальный уровень репутации для контрактов (0 — торгует со всеми) */
+  contractMinLevel: number;
+}
+
+/** таблица биржи (trade.ts; [DECISION M163-репутация/контракты/тренды]) */
+export interface VillageTradeTable {
+  reputation: {
+    /** шкала уровней по возрастанию minPoints (4 ступени) */
+    levels: Array<{ id: string; name: string; minPoints: number }>;
+    /** очки за исполнение контракта */
+    pointsPerContract: number;
+    /** скидка уровня «Друг деревни» (04-DISCOUNTS §2.1: −5%) */
+    friendDiscountPercent: number;
+  };
+  contracts: {
+    qtyMin: number;
+    qtyMax: number;
+    /** тировые премии к ставке скупки (данные; взвешенный ролл по сиду) */
+    premiums: number[];
+  };
+  trends: {
+    /** сколько товаров биржи трендируется в день */
+    perDay: number;
+    /** «изобилие» — скидка на покупку (04-DISCOUNTS §2.1: −15%) */
+    abundancePercent: number;
+    /** «дефицит» — наценка на покупку (04-DISCOUNTS §4.3: markup) */
+    deficitMarkupPercent: number;
+    /** ± к премии контракта (изобилие −, дефицит +) */
+    contractSwingPercent: number;
+    /** кольцевой буфер истории цен (записей) */
+    historyCap: number;
+  };
+  partners: VillageTradePartnerDef[];
+}
+
 /** общий баланс деревни (table.ts): счастье/ворчание/XP-кривая/гейт */
 export interface VillageTable {
   gate: Condition;
